@@ -77,7 +77,7 @@ export function LoginView({ onGoogleLogin, errorMsg }: LoginViewProps) {
           <p className="text-sm text-[var(--mut)] pt-1">
             {mode === 'login'
               ? 'Inicia sesión con tu cuenta de Google para acceder a tu entrenamiento.'
-              : 'Crea tu perfil con tu nombre y vincúlalo con Google para recibir tu planificación en blanco.'}
+              : 'Crea tu cuenta con tu nombre y vincúlala con Google para acceder a tu entrenamiento.'}
           </p>
         </div>
 
@@ -154,7 +154,7 @@ export function LoginView({ onGoogleLogin, errorMsg }: LoginViewProps) {
                 type="text"
                 maxLength={40}
                 autoComplete="name"
-                placeholder="Ej. Paz, Felipe, Daniel…"
+                placeholder="Tu nombre"
                 value={athleteName}
                 onChange={(e) => {
                   setAthleteName(e.target.value);
@@ -168,10 +168,6 @@ export function LoginView({ onGoogleLogin, errorMsg }: LoginViewProps) {
               {nameError && (
                 <p className="text-xs text-[var(--danger)]">{nameError}</p>
               )}
-              <p className="text-[11.5px] text-[var(--mut)] leading-relaxed pt-0.5">
-                Este nombre quedará guardado en tu cuenta para conectarte con tu entrenador y
-                mantener todos tus datos vacíos hasta que él suba tu planificación.
-              </p>
             </div>
 
             <button

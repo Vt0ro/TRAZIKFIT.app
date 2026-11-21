@@ -176,8 +176,7 @@ export function InviteGateView({
                   </span>
                   <h2 className="font-display text-xl font-bold">{iv.coachName}</h2>
                   <p className="text-xs text-[var(--mut)] leading-relaxed">
-                    Te invitó a unirte a TrazikFit como su atleta. Tus datos iniciarán en blanco
-                    hasta que tu entrenador cargue tu planificación.
+                    Te invitó a unirte a TrazikFit como su atleta.
                   </p>
                 </div>
 
@@ -216,7 +215,7 @@ export function InviteGateView({
             </p>
             <p className="text-xs text-[var(--mut)] leading-relaxed">
               En cuanto tu entrenador envíe la invitación desde su panel, aparecerá aquí
-              automáticamente para que puedas entrar con tu cuenta en blanco.
+              automáticamente para que puedas entrar.
             </p>
           </div>
         )}
