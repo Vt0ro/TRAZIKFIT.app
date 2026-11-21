@@ -649,8 +649,8 @@ export function normalizeState(raw: Partial<AppState>): AppState {
     metric: 'reps',
     anchor: nowToday,
     sessions: [],
-    user: 'vale',
-    users: ['vale'],
+    user: '',
+    users: [],
     plans: {},
     pm: 0,
     pg: 'w',
@@ -689,24 +689,19 @@ export function normalizeState(raw: Partial<AppState>): AppState {
     );
   }
 
-  if (!base.users.length) {
-    base.users = ['vale'];
+  if (base.users.length > 0) {
+    Object.values(base.plans || {}).forEach((p) =>
+      (p || []).forEach((m) => {
+        if (m && !m.id) m.id = uid();
+      })
+    );
+    if (!base.users.includes(base.user)) base.user = base.users[0];
+    if (!base.plans[base.user]) base.plans[base.user] = [];
+    if (!base.plans[base.user][base.pm]) base.pm = 0;
+  } else {
+    base.user = '';
+    base.pm = 0;
   }
-  if (
-    base.users.includes('vale') &&
-    (!base.plans['vale'] || !base.plans['vale'].length) &&
-    Object.keys(base.plans).length === 0
-  ) {
-    base.plans['vale'] = [PLAN()[1]];
-  }
-  Object.values(base.plans || {}).forEach((p) =>
-    (p || []).forEach((m) => {
-      if (m && !m.id) m.id = uid();
-    })
-  );
-  if (!base.users.includes(base.user)) base.user = base.users[0];
-  if (!base.plans[base.user]) base.plans[base.user] = [];
-  if (!base.plans[base.user][base.pm]) base.pm = 0;
 
   base.sport = 'Gimnasio';
   if (
@@ -719,74 +714,55 @@ export function normalizeState(raw: Partial<AppState>): AppState {
   }
   if (!MET[base.metric]) base.metric = 'reps';
 
-  // Seed initial sample sessions & bodyweight once for first-time visitors (exact parity with HTML demo4)
-  try {
-    if (!localStorage.getItem('plan_v1_demo4')) {
-      localStorage.setItem('plan_v1_demo4', '1');
-      base.role = '';
-      base.view = 'month';
-      base.local = false;
-      base.users = ['vale'];
-      base.user = 'vale';
-      base.sessions = [];
-      base.prof = {};
-      base.theme = 'dark';
-      const m0 = mon(new Date());
-      const M = base.plans['vale'][0];
-      M.d.forEach((d) => {
-        [-14, -7, 0].forEach((off) => {
-          const dt = iso(add(m0, off + ((d.wd + 6) % 7)));
-          const past = dt <= nowToday;
-          const ex = exFrom(d);
-          ex.forEach((e) =>
-            e.sets.forEach((x) => {
-              if (past) {
-                x.done = true;
-                const a = parseFloat(String(x.a)) || 0;
-                if (a) x.a = a + ((off + 14) / 7) * 2.5;
-                x.rpe = 7;
-              }
-            })
-          );
-          base.sessions.push({
-            id: uid(),
-            user: 'vale',
-            date: dt,
-            sport: 'Gimnasio',
-            name: `${M.n} · ${d.n}${d.t ? ' · ' + d.t : ''}`,
-            mid: M.id,
-            exercises: ex,
-            rpe: past ? 7 : 0,
-          });
-        });
-      });
-      base.bwh = [
-        [-60, 81.4],
-        [-45, 80.8],
-        [-30, 80.1],
-        [-14, 79.6],
-        [-3, 78.9],
-      ].map(([o, k]) => ({
-        id: uid(),
-        user: 'vale',
-        date: iso(add(new Date(), o)),
-        kg: k,
-      }));
-      base.bwt = { vale: 78.9 };
-    }
-  } catch {
-    // ignore storage errors
-  }
-
   return base;
+}
+
+export function createEmptyAuthState(prev?: Partial<AppState>): AppState {
+  return {
+    sport: 'Gimnasio',
+    view: 'month',
+    metric: prev?.metric || 'reps',
+    anchor: todayStr(),
+    sessions: [],
+    user: '',
+    users: [],
+    plans: {},
+    pm: 0,
+    pg: prev?.pg || 'w',
+    pex: '',
+    cdel: '',
+    annex: [],
+    axs: 1,
+    role: '',
+    msg: '',
+    sy: '',
+    prs: [],
+    prx: [],
+    bwt: {},
+    bwh: [],
+    prof: {},
+    theme: prev?.theme || 'dark',
+    platform: 'auto',
+    code: '',
+    linked: {},
+    mts: 0,
+    cts: 0,
+    ...(prev?.snd ? { snd: prev.snd } : {}),
+    ...(prev?.notifEnabled !== undefined ? { notifEnabled: prev.notifEnabled } : {}),
+  };
 }
 
 export function loadInitialState(): AppState {
   try {
-    const raw = localStorage.getItem('plan_v1');
-    return normalizeState(raw ? JSON.parse(raw) : {});
+    const rawStr = localStorage.getItem('plan_v1');
+    const parsed = rawStr ? (JSON.parse(rawStr) as Partial<AppState>) : {};
+    const hasCloudCtx = Boolean(localStorage.getItem('plan_v1_cloud_ctx'));
+    if (!hasCloudCtx) {
+      return createEmptyAuthState(parsed);
+    }
+    return normalizeState(parsed);
   } catch {
-    return normalizeState({});
+    return createEmptyAuthState();
   }
 }
 

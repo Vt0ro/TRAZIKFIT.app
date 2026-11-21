@@ -203,7 +203,6 @@ export function AthleteWorkoutView({
   const snd = sound || DEFAULT_SOUND_SETTINGS;
   const elapsed = tmEl(s);
   const running = !!(s.tm && s.tm.st);
-  const zero = !s.tm || (!s.tm.st && !(s.tm.acc > 0));
   const restDone = !!(restTimer && restTimer.done);
   const restPaused = !!(restTimer && restTimer.paused);
   const restPct =
@@ -806,22 +805,37 @@ export function AthleteWorkoutView({
             </div>
           </div>
 
-          {/* Expandable Rest & Session Timer Controls */}
+          {/* Expandable Rest Timer Controls (only for rest, not session time) */}
           {timerExpanded && (
-            <div className="tf-card p-3 space-y-2.5">
+            <div className="tf-card p-3 space-y-2">
+              <div className="flex items-center justify-between text-[11px] text-[var(--mut)] px-0.5">
+                <span className="font-semibold uppercase tracking-wider">
+                  Tiempo de descanso
+                </span>
+                <span className="font-mono-num text-[var(--ac2)] font-semibold">
+                  {restTimer ? (restDone ? '¡Listo!' : fm(restLeft)) : '0:00'}
+                </span>
+              </div>
               <div className="grid grid-cols-4 gap-1.5">
                 {[30, 60, 90, 120].map((sec) => (
                   <button
                     key={sec}
                     type="button"
                     onClick={() => onTimerAction(`r${sec}`)}
-                    className="min-h-[38px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-semibold cursor-pointer"
+                    className="min-h-[36px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-semibold cursor-pointer"
                   >
                     {sec < 60 ? `${sec}s` : sec === 90 ? '90s' : `${sec / 60}m`}
                   </button>
                 ))}
               </div>
               <div className="grid grid-cols-4 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onTimerAction('r-60')}
+                  className="min-h-[36px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-semibold cursor-pointer"
+                >
+                  −1m
+                </button>
                 <button
                   type="button"
                   onClick={() => onTimerAction('-')}
@@ -838,8 +852,18 @@ export function AthleteWorkoutView({
                 </button>
                 <button
                   type="button"
+                  onClick={() => onTimerAction('r+60')}
+                  className="min-h-[36px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-semibold cursor-pointer"
+                >
+                  +1m
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
                   onClick={() => onTimerAction('rp')}
-                  className={`min-h-[36px] rounded-xl text-xs font-semibold cursor-pointer ${
+                  disabled={!restTimer || restDone}
+                  className={`min-h-[36px] rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-45 disabled:pointer-events-none ${
                     restPaused
                       ? 'tf-btn-pri'
                       : 'border border-[var(--line)] bg-[var(--surface-2)]'
@@ -849,39 +873,18 @@ export function AthleteWorkoutView({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onTimerAction('x')}
-                  className="min-h-[36px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-medium text-[var(--mut)] cursor-pointer"
+                  onClick={() => {
+                    haptic('light');
+                    onTimerAction('rz');
+                  }}
+                  className={`min-h-[36px] rounded-xl border text-xs font-semibold cursor-pointer ${
+                    restTimer
+                      ? 'border-[var(--ac2)]/40 bg-[var(--ac)]/15 text-[var(--ac2)]'
+                      : 'border-[var(--line)] bg-[var(--surface-2)] text-[var(--mut)]'
+                  }`}
                 >
-                  Quitar
+                  ↺ Volver a 0:00
                 </button>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[var(--line)]/60">
-                <span className="text-[11px] text-[var(--mut)]">Cronómetro sesión</span>
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => onTimerAction('sm')}
-                    className="min-h-[32px] px-2.5 rounded-lg border border-[var(--line)] text-xs cursor-pointer"
-                  >
-                    −1m
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onTimerAction('sp')}
-                    className="min-h-[32px] px-2.5 rounded-lg border border-[var(--line)] text-xs cursor-pointer"
-                  >
-                    +1m
-                  </button>
-                  {!zero && (
-                    <button
-                      type="button"
-                      onClick={() => onTimerAction('sz')}
-                      className="min-h-[32px] px-2.5 rounded-lg border border-[var(--line)] text-xs text-[var(--mut)] cursor-pointer"
-                    >
-                      0:00
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           )}

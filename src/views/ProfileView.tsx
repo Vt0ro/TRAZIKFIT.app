@@ -3,10 +3,14 @@ import {
   BarChart3,
   Bell,
   BellRing,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   ClipboardList,
   Cloud,
   LogOut,
+  Palette,
+  Settings,
   Shield,
   Sun,
   Trophy,
@@ -36,6 +40,7 @@ interface ProfileViewProps {
   roleState: UserRoleState;
   myDoc: { cn?: Record<string, string> };
   pendingInvitesCount: number;
+  unreadNotifCount: number;
   notifPermission: NotifPermissionState;
   onRequestNotificationPermission: () => void;
   onOpenNotifications: () => void;
@@ -56,6 +61,7 @@ export function ProfileView({
   roleState,
   myDoc,
   pendingInvitesCount,
+  unreadNotifCount,
   notifPermission,
   onRequestNotificationPermission,
   onOpenNotifications,
@@ -78,6 +84,7 @@ export function ProfileView({
   const [lblSing, setLblSing] = useState(S.lbl?.sing || '');
   const [lblPlu, setLblPlu] = useState(S.lbl?.plu || '');
   const [lblAdd, setLblAdd] = useState(S.lbl?.add || '');
+  const [configOpen, setConfigOpen] = useState(true);
 
   const profStatus = (() => {
     if (S.role === 'coach') return 'ok';
@@ -142,10 +149,34 @@ export function ProfileView({
     : 'Atleta invitado';
 
   const isLight = S.theme === 'light';
+  const snd = S.snd || DEFAULT_SOUND_SETTINGS;
+  const notifOn = S.notifEnabled !== false;
 
   return (
     <div className="max-w-2xl mx-auto space-y-4">
-      <h2 className="font-display text-3xl font-extrabold tracking-tight">Perfil</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-display text-3xl font-extrabold tracking-tight">Mi perfil</h2>
+        <button
+          type="button"
+          onClick={() => {
+            haptic('light');
+            onOpenNotifications();
+          }}
+          aria-label="Notificaciones"
+          className={`tf-tap relative w-10 h-10 rounded-full border flex items-center justify-center cursor-pointer ${
+            unreadNotifCount > 0
+              ? 'border-[var(--ac2)]/65 bg-[var(--ac)]/20 text-[var(--ac2)]'
+              : 'border-[var(--line)] bg-[var(--surface)] text-[var(--mut)] hover:text-[var(--ac2)]'
+          }`}
+        >
+          <Bell className="w-5 h-5" />
+          {unreadNotifCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#A259FF] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[var(--bg)] tabular-nums">
+              {unreadNotifCount > 9 ? '9+' : unreadNotifCount}
+            </span>
+          )}
+        </button>
+      </div>
 
       {profStatus === 'ok' ? (
         <div className="tf-card p-4 flex items-center gap-3.5">
@@ -192,32 +223,6 @@ export function ProfileView({
           )}
         </div>
       )}
-
-      {/* Cloud Sync CTA */}
-      <button
-        type="button"
-        onClick={() => {
-          haptic('light');
-          if (me) onOpenCloud();
-          else onGoogleLogin();
-        }}
-        className="w-full flex items-center gap-3.5 p-4 rounded-[22px] text-left text-white border border-[#E0C8FF]/35 bg-gradient-to-br from-[#A259FF]/80 via-[#6D28D9]/85 to-[#321C6A]/95 shadow-lg shadow-[#A259FF]/25 cursor-pointer active:scale-[0.98] transition-transform"
-      >
-        <span className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
-          <Cloud className="w-6 h-6" />
-        </span>
-        <span className="flex-1 min-w-0">
-          <b className="block text-sm sm:text-base">Guardar cuenta / Sincronizar con Google</b>
-          <small className="block text-xs text-white/80 mt-0.5 break-all">
-            {pendingInvitesCount > 0
-              ? `Tienes ${pendingInvitesCount} invitación(es) pendiente(s) · ábrela para responder`
-              : me
-              ? `Cuenta vinculada · ${me.email || ''}`
-              : 'Vincula tu cuenta y respalda tu progreso en la nube'}
-          </small>
-        </span>
-        <ChevronRight className="w-5 h-5 text-white/80 shrink-0" />
-      </button>
 
       {profStatus === 'ok' && (
         <>
@@ -407,306 +412,147 @@ export function ProfileView({
         </button>
       </div>
 
-      {/* Account & Admin Rows */}
-      <div className="tf-card divide-y divide-[var(--line)]/60 overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3.5">
-          <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
-            <Shield className="w-5 h-5" />
-          </span>
-          <div className="flex-1 min-w-0">
-            <b className="block text-sm font-semibold">Tipo de cuenta</b>
-            <small className="block text-xs text-[var(--mut)]">
-              {accountTypeText} · lo define el administrador
-            </small>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onOpenCloud}
-          className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--surface-2)]/50 cursor-pointer"
-        >
-          <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
-            <Cloud className="w-5 h-5" />
-          </span>
-          <div className="flex-1 min-w-0">
-            <b className="block text-sm font-semibold">Cuenta y copias de seguridad</b>
-            <small className="block text-xs text-[var(--mut)]">
-              Vínculos, invitaciones y respaldo JSON
-            </small>
-          </div>
-          <ChevronRight className="w-5 h-5 text-[var(--mut)]" />
-        </button>
-
-        {me && roleState.admin && (
-          <button
-            type="button"
-            onClick={() => onNavigate('admin')}
-            className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--surface-2)]/50 cursor-pointer"
-          >
-            <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
-              <Shield className="w-5 h-5" />
-            </span>
-            <div className="flex-1 min-w-0">
-              <b className="block text-sm font-semibold">Administración</b>
-              <small className="block text-xs text-[var(--mut)]">Usuarios y roles</small>
-            </div>
-            <ChevronRight className="w-5 h-5 text-[var(--mut)]" />
-          </button>
-        )}
-      </div>
-
-      {/* Coach Athletes & Custom Labels */}
+      {/* Coach Athletes */}
       {S.role === 'coach' && (
-        <>
-          <div className="tf-card p-4 space-y-3">
-            <div>
-              <b className="text-base block">Mis {labels.plu}</b>
-              <p className="text-xs text-[var(--mut)] mt-0.5">
-                Toca un nombre para seleccionarlo. Para borrar, selecciónalo y pulsa ✕.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {S.users.map((u) => (
-                <div key={u} className="inline-flex items-center">
+        <div className="tf-card p-4 space-y-3">
+          <div>
+            <b className="text-base block">Mis {labels.plu}</b>
+            <p className="text-xs text-[var(--mut)] mt-0.5">
+              Toca un nombre para seleccionarlo. Para borrar, selecciónalo y pulsa ✕.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {S.users.map((u) => (
+              <div key={u} className="inline-flex items-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light');
+                    onUpdateState((prev) => ({ ...prev, user: u, pm: 0, cdel: '' }));
+                  }}
+                  className={`min-h-[38px] px-3.5 rounded-xl text-sm font-medium border cursor-pointer ${
+                    u === S.user
+                      ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
+                      : 'bg-[var(--surface-2)] border-[var(--line)]'
+                  }`}
+                >
+                  {u}
+                </button>
+                {u === S.user && (
                   <button
                     type="button"
                     onClick={() => {
                       haptic('light');
-                      onUpdateState((prev) => ({ ...prev, user: u, pm: 0, cdel: '' }));
+                      onDeleteAthlete(u);
                     }}
-                    className={`min-h-[38px] px-3.5 rounded-xl text-sm font-medium border cursor-pointer ${
-                      u === S.user
-                        ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
-                        : 'bg-[var(--surface-2)] border-[var(--line)]'
-                    }`}
+                    title={`Eliminar a ${u}`}
+                    aria-label={`Eliminar a ${u}`}
+                    className="ml-1 text-xs text-[var(--danger)] px-2 py-1 cursor-pointer"
                   >
-                    {u}
+                    ✕
                   </button>
-                  {u === S.user && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        haptic('light');
-                        onDeleteAthlete(u);
-                      }}
-                      title={`Eliminar a ${u}`}
-                      aria-label={`Eliminar a ${u}`}
-                      className="ml-1 text-xs text-[var(--danger)] px-2 py-1 cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                className="tf-input flex-1 px-3 py-2 text-sm"
-                placeholder={`Nombre del ${labels.sing}`}
-                value={newAth}
-                onChange={(e) => {
-                  setNewAth(e.target.value);
-                  if (athError) setAthError('');
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const cleaned = cleanName(newAth);
-                  if (!cleaned) {
-                    setAthError('Escribe un nombre.');
-                    return;
-                  }
-                  const err = onAddAthlete(cleaned);
-                  if (err) setAthError(err);
-                  else {
-                    haptic('success');
-                    setNewAth('');
-                    setAthError('');
-                  }
-                }}
-                className="tf-btn-pri px-4 rounded-xl text-sm font-semibold cursor-pointer"
-              >
-                Agregar
-              </button>
-            </div>
-            {athError && <p className="text-xs text-[var(--danger)]">{athError}</p>}
+                )}
+              </div>
+            ))}
           </div>
-
-          <div className="tf-card p-4 space-y-3">
-            <div>
-              <b className="text-base block">Personalizar nombres</b>
-              <p className="text-xs text-[var(--mut)] mt-0.5">
-                Cambia cómo se llaman estas partes en la pestaña del entrenador. Solo cambia los textos, no tus datos.
-              </p>
-            </div>
-            <label className="block text-xs text-[var(--mut)]">
-              Nombre (singular)
-              <input
-                type="text"
-                className="tf-input w-full mt-1 px-3 py-2 text-sm"
-                placeholder="atleta"
-                value={lblSing}
-                onChange={(e) => setLblSing(e.target.value)}
-              />
-            </label>
-            <label className="block text-xs text-[var(--mut)]">
-              Nombre (plural)
-              <input
-                type="text"
-                className="tf-input w-full mt-1 px-3 py-2 text-sm"
-                placeholder={labels.plu}
-                value={lblPlu}
-                onChange={(e) => setLblPlu(e.target.value)}
-              />
-            </label>
-            <label className="block text-xs text-[var(--mut)]">
-              Texto de agregar
-              <input
-                type="text"
-                className="tf-input w-full mt-1 px-3 py-2 text-sm"
-                placeholder={labels.add}
-                value={lblAdd}
-                onChange={(e) => setLblAdd(e.target.value)}
-              />
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="tf-input flex-1 px-3 py-2 text-sm"
+              placeholder={`Nombre del ${labels.sing}`}
+              value={newAth}
+              onChange={(e) => {
+                setNewAth(e.target.value);
+                if (athError) setAthError('');
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const cleaned = cleanName(newAth);
+                if (!cleaned) {
+                  setAthError('Escribe un nombre.');
+                  return;
+                }
+                const err = onAddAthlete(cleaned);
+                if (err) setAthError(err);
+                else {
                   haptic('success');
-                  onUpdateState((prev) => ({
-                    ...prev,
-                    lbl: { sing: lblSing, plu: lblPlu, add: lblAdd },
-                  }));
-                }}
-                className="tf-btn-pri flex-1 min-h-[42px] rounded-xl text-sm font-semibold cursor-pointer"
-              >
-                Aplicar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLblSing('');
-                  setLblPlu('');
-                  setLblAdd('');
-                  onUpdateState((prev) => ({ ...prev, lbl: {} }));
-                }}
-                className="flex-1 min-h-[42px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-sm font-medium cursor-pointer"
-              >
-                Restablecer
-              </button>
-            </div>
+                  setNewAth('');
+                  setAthError('');
+                }
+              }}
+              className="tf-btn-pri px-4 rounded-xl text-sm font-semibold cursor-pointer"
+            >
+              Agregar
+            </button>
           </div>
-        </>
+          {athError && <p className="text-xs text-[var(--danger)]">{athError}</p>}
+        </div>
       )}
 
-      {/* Theme & Platform Style Preferences */}
-      <div className="tf-card divide-y divide-[var(--line)]/60 overflow-hidden">
+      {/* Configuraciones Section */}
+      <section aria-label="Configuraciones" className="tf-card overflow-hidden">
         <button
           type="button"
           onClick={() => {
             haptic('light');
-            onUpdateState((prev) => ({ ...prev, theme: isLight ? 'dark' : 'light' }));
+            setConfigOpen((v) => !v);
           }}
-          className="w-full flex items-center gap-3 px-4 py-3.5 text-left cursor-pointer"
+          className="w-full flex items-center gap-3 px-4 py-4 text-left hover:bg-[var(--surface-2)]/40 cursor-pointer"
         >
-          <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
-            <Sun className="w-5 h-5" />
+          <span className="w-10 h-10 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
+            <Settings className="w-5 h-5" />
           </span>
           <div className="flex-1 min-w-0">
-            <b className="block text-sm font-semibold">Tema claro</b>
+            <b className="block text-base font-bold">Configuraciones</b>
             <small className="block text-xs text-[var(--mut)]">
-              Toca para cambiar el modo de la app
+              Apariencia, colores, sonido, volumen, notificaciones y cuenta
             </small>
           </div>
-          <span
-            className={`w-12 h-7 rounded-full relative transition-colors shrink-0 ${
-              isLight ? 'bg-[var(--ac)]' : 'bg-[var(--mut)]/30'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${
-                isLight ? 'left-[22px]' : 'left-0.5'
-              }`}
-            />
-          </span>
+          {configOpen ? (
+            <ChevronUp className="w-5 h-5 text-[var(--mut)] shrink-0" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-[var(--mut)] shrink-0" />
+          )}
         </button>
 
-        {/* Notifications Preference */}
-        {(() => {
-          const notifOn = S.notifEnabled !== false;
-          return (
-            <div className="px-4 py-3.5 space-y-2.5">
-              <div className="flex items-center gap-3">
-                <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
-                  <Bell className="w-5 h-5" />
-                </span>
-                <div className="flex-1 min-w-0">
-                  <b className="block text-sm font-semibold">Notificaciones</b>
-                  <small className="block text-xs text-[var(--mut)]">
-                    {S.role === 'coach'
-                      ? 'Avisos cuando tus atletas terminan sesiones'
-                      : 'Cambios en planificación y recordatorios de próxima sesión'}
-                  </small>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic('light');
-                    const nextVal = !notifOn;
-                    onUpdateState((prev) => ({ ...prev, notifEnabled: nextVal }));
-                    if (nextVal && notifPermission === 'default') {
-                      onRequestNotificationPermission();
-                    }
-                  }}
-                  aria-label="Activar o desactivar notificaciones"
-                  className={`w-12 h-7 rounded-full relative transition-colors shrink-0 cursor-pointer ${
-                    notifOn ? 'bg-[var(--ac)]' : 'bg-[var(--mut)]/30'
+        {configOpen && (
+          <div className="border-t border-[var(--line)]/60 divide-y divide-[var(--line)]/60">
+            {/* Apariencia y colores */}
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light');
+                onUpdateState((prev) => ({ ...prev, theme: isLight ? 'dark' : 'light' }));
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3.5 text-left cursor-pointer"
+            >
+              <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
+                {isLight ? <Sun className="w-5 h-5" /> : <Palette className="w-5 h-5" />}
+              </span>
+              <div className="flex-1 min-w-0">
+                <b className="block text-sm font-semibold">Apariencia y colores (Tema claro)</b>
+                <small className="block text-xs text-[var(--mut)]">
+                  {isLight
+                    ? 'Tema claro activo · Toca para volver al modo oscuro violeta'
+                    : 'Modo oscuro TrazikFit · Toca para activar tema claro'}
+                </small>
+              </div>
+              <span
+                className={`w-12 h-7 rounded-full relative transition-colors shrink-0 ${
+                  isLight ? 'bg-[var(--ac)]' : 'bg-[var(--mut)]/30'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${
+                    isLight ? 'left-[22px]' : 'left-0.5'
                   }`}
-                >
-                  <span
-                    className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${
-                      notifOn ? 'left-[22px]' : 'left-0.5'
-                    }`}
-                  />
-                </button>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 pl-12">
-                {notifPermission === 'default' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      haptic('light');
-                      onRequestNotificationPermission();
-                    }}
-                    className="tf-tap px-3 py-1.5 rounded-xl bg-[var(--ac)]/20 border border-[var(--ac2)]/35 text-xs font-semibold text-[var(--ac2)] inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <BellRing className="w-3.5 h-3.5" />
-                    Activar avisos del dispositivo
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic('light');
-                    onOpenNotifications();
-                  }}
-                  className="tf-tap px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-medium text-[var(--mut)] hover:text-[var(--tx)] cursor-pointer"
-                >
-                  Ver centro de avisos
-                </button>
-              </div>
-            </div>
-          );
-        })()}
+                />
+              </span>
+            </button>
 
-        {/* Sound Preferences */}
-        {(() => {
-          const snd = S.snd || DEFAULT_SOUND_SETTINGS;
-          return (
+            {/* Sonido y volumen */}
             <div className="px-4 py-3.5 space-y-3">
               <div className="flex items-center gap-3">
                 <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
@@ -809,31 +655,221 @@ export function ProfileView({
                 </button>
               </div>
             </div>
-          );
-        })()}
-      </div>
 
-      <PWAInstallButton />
+            {/* Notificaciones */}
+            <div className="px-4 py-3.5 space-y-2.5">
+              <div className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
+                  <Bell className="w-5 h-5" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <b className="block text-sm font-semibold">Notificaciones</b>
+                  <small className="block text-xs text-[var(--mut)]">
+                    {S.role === 'coach'
+                      ? 'Avisos cuando tus atletas terminan sesiones'
+                      : 'Cambios en planificación y recordatorios de próxima sesión'}
+                  </small>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light');
+                    const nextVal = !notifOn;
+                    onUpdateState((prev) => ({ ...prev, notifEnabled: nextVal }));
+                    if (nextVal && notifPermission === 'default') {
+                      onRequestNotificationPermission();
+                    }
+                  }}
+                  aria-label="Activar o desactivar notificaciones"
+                  className={`w-12 h-7 rounded-full relative transition-colors shrink-0 cursor-pointer ${
+                    notifOn ? 'bg-[var(--ac)]' : 'bg-[var(--mut)]/30'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-all ${
+                      notifOn ? 'left-[22px]' : 'left-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pl-12">
+                {notifPermission === 'default' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptic('light');
+                      onRequestNotificationPermission();
+                    }}
+                    className="tf-tap px-3 py-1.5 rounded-xl bg-[var(--ac)]/20 border border-[var(--ac2)]/35 text-xs font-semibold text-[var(--ac2)] inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BellRing className="w-3.5 h-3.5" />
+                    Activar avisos del dispositivo
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light');
+                    onOpenNotifications();
+                  }}
+                  className="tf-tap px-3 py-1.5 rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-xs font-medium text-[var(--tx)] inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Bell className="w-3.5 h-3.5 text-[var(--ac2)]" />
+                  Ver centro de avisos{unreadNotifCount > 0 ? ` (${unreadNotifCount})` : ''}
+                </button>
+              </div>
+            </div>
 
-      <div className="tf-card p-4 space-y-1.5">
-        <b className="text-sm block">¿Cómo se usa tu peso?</b>
-        <p className="text-xs text-[var(--mut)] leading-relaxed" data-selectable="true">
-          En los ejercicios con «Usar mi peso corporal» (dominadas, fondos, flexiones…), el
-          tonelaje es (peso corporal + lastre) × repeticiones. Se usa el peso que tenías en la
-          fecha de cada sesión. Sin esa opción: carga × repeticiones. En ejercicios por tiempo,
-          10 s cuentan como 1 repetición.
-        </p>
-      </div>
+            {/* Cuenta, sincronización y administración */}
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light');
+                if (me) onOpenCloud();
+                else onGoogleLogin();
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--surface-2)]/50 cursor-pointer"
+            >
+              <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
+                <Cloud className="w-5 h-5" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <b className="block text-sm font-semibold">
+                  Cuenta, Google y copias de seguridad
+                </b>
+                <small className="block text-xs text-[var(--mut)] break-all">
+                  {pendingInvitesCount > 0
+                    ? `Tienes ${pendingInvitesCount} invitación(es) pendiente(s) · Toca para responder`
+                    : me
+                    ? `Vinculada (${me.email || ''}) · Vínculos y respaldo JSON`
+                    : 'Vincula tu cuenta de Google y respalda tu progreso'}
+                </small>
+              </div>
+              <ChevronRight className="w-5 h-5 text-[var(--mut)]" />
+            </button>
 
-      {me && (
-        <button
-          type="button"
-          onClick={onSignOut}
-          className="w-full min-h-[50px] rounded-2xl border border-[var(--line)] bg-[var(--surface)] text-sm font-medium text-[var(--mut)] hover:text-[var(--tx)] flex items-center justify-center gap-2 cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" /> Cerrar sesión
-        </button>
-      )}
+            <div className="flex items-center gap-3 px-4 py-3.5">
+              <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
+                <Shield className="w-5 h-5" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <b className="block text-sm font-semibold">Tipo de cuenta</b>
+                <small className="block text-xs text-[var(--mut)]">
+                  {accountTypeText} · lo define el administrador
+                </small>
+              </div>
+            </div>
+
+            {me && roleState.admin && (
+              <button
+                type="button"
+                onClick={() => onNavigate('admin')}
+                className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--surface-2)]/50 cursor-pointer"
+              >
+                <span className="w-9 h-9 rounded-xl bg-[var(--ac)]/20 text-[var(--ac2)] flex items-center justify-center shrink-0">
+                  <Shield className="w-5 h-5" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <b className="block text-sm font-semibold">Administración</b>
+                  <small className="block text-xs text-[var(--mut)]">Usuarios y roles</small>
+                </div>
+                <ChevronRight className="w-5 h-5 text-[var(--mut)]" />
+              </button>
+            )}
+
+            {S.role === 'coach' && (
+              <div className="p-4 space-y-3">
+                <div>
+                  <b className="text-sm block">Personalizar nombres</b>
+                  <p className="text-xs text-[var(--mut)] mt-0.5">
+                    Cambia cómo se llaman estas partes en la pestaña del entrenador. Solo cambia los textos, no tus datos.
+                  </p>
+                </div>
+                <label className="block text-xs text-[var(--mut)]">
+                  Nombre (singular)
+                  <input
+                    type="text"
+                    className="tf-input w-full mt-1 px-3 py-2 text-sm"
+                    placeholder="atleta"
+                    value={lblSing}
+                    onChange={(e) => setLblSing(e.target.value)}
+                  />
+                </label>
+                <label className="block text-xs text-[var(--mut)]">
+                  Nombre (plural)
+                  <input
+                    type="text"
+                    className="tf-input w-full mt-1 px-3 py-2 text-sm"
+                    placeholder={labels.plu}
+                    value={lblPlu}
+                    onChange={(e) => setLblPlu(e.target.value)}
+                  />
+                </label>
+                <label className="block text-xs text-[var(--mut)]">
+                  Texto de agregar
+                  <input
+                    type="text"
+                    className="tf-input w-full mt-1 px-3 py-2 text-sm"
+                    placeholder={labels.add}
+                    value={lblAdd}
+                    onChange={(e) => setLblAdd(e.target.value)}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptic('success');
+                      onUpdateState((prev) => ({
+                        ...prev,
+                        lbl: { sing: lblSing, plu: lblPlu, add: lblAdd },
+                      }));
+                    }}
+                    className="tf-btn-pri flex-1 min-h-[42px] rounded-xl text-sm font-semibold cursor-pointer"
+                  >
+                    Aplicar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLblSing('');
+                      setLblPlu('');
+                      setLblAdd('');
+                      onUpdateState((prev) => ({ ...prev, lbl: {} }));
+                    }}
+                    className="flex-1 min-h-[42px] rounded-xl border border-[var(--line)] bg-[var(--surface-2)] text-sm font-medium cursor-pointer"
+                  >
+                    Restablecer
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="p-4 space-y-3">
+              <PWAInstallButton />
+              <div className="space-y-1">
+                <b className="text-sm block">¿Cómo se usa tu peso?</b>
+                <p className="text-xs text-[var(--mut)] leading-relaxed" data-selectable="true">
+                  En los ejercicios con «Usar mi peso corporal» (dominadas, fondos, flexiones…), el
+                  tonelaje es (peso corporal + lastre) × repeticiones. Se usa el peso que tenías en la
+                  fecha de cada sesión. Sin esa opción: carga × repeticiones. En ejercicios por tiempo,
+                  10 s cuentan como 1 repetición.
+                </p>
+              </div>
+            </div>
+
+            {me && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="w-full min-h-[48px] px-4 text-sm font-medium text-[var(--mut)] hover:text-[var(--danger)] flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" /> Cerrar sesión
+              </button>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

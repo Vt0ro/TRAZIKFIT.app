@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Bell,
-  BellRing,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -501,31 +499,6 @@ export function CalendarView({
                 Entrenar
               </button>
             )}
-
-            {onOpenNotifications && (
-              <button
-                type="button"
-                onClick={() => {
-                  haptic('light');
-                  onOpenNotifications();
-                }}
-                aria-label="Abrir notificaciones"
-                className={`tf-tap relative h-7 px-2 rounded-lg border text-[11px] font-medium flex items-center gap-1 cursor-pointer ${
-                  unreadNotifCount > 0
-                    ? 'border-[var(--ac2)]/50 bg-[var(--ac)]/15 text-[var(--ac2)]'
-                    : 'border-[var(--line)] text-[var(--mut)] hover:text-[var(--tx)]'
-                }`}
-              >
-                {unreadNotifCount > 0 ? (
-                  <BellRing className="w-3 h-3 text-[var(--ac2)]" />
-                ) : (
-                  <Bell className="w-3 h-3" />
-                )}
-                {unreadNotifCount > 0 && (
-                  <span className="tabular-nums font-semibold">{unreadNotifCount}</span>
-                )}
-              </button>
-            )}
           </div>
         </div>
 
@@ -643,7 +616,11 @@ export function CalendarView({
                   }}
                   className="min-w-0 flex-1 flex items-center gap-1.5 text-left cursor-pointer"
                 >
-                  <BellRing className="w-3 h-3 text-[var(--ac2)] shrink-0" />
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      unreadNotifCount > 0 ? 'bg-[var(--ac2)]' : 'bg-[var(--mut)]/60'
+                    }`}
+                  />
                   <span className="text-[11px] text-[var(--mut)] truncate">
                     {sessionOverview.latestNotif
                       ? `${sessionOverview.latestNotif.title}: ${sessionOverview.latestNotif.body}`

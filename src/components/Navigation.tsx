@@ -9,7 +9,6 @@ import {
 import {
   ArrowUp,
   BarChart3,
-  Bell,
   Calendar,
   ClipboardList,
   Clock,
@@ -33,7 +32,6 @@ interface NavigationProps {
   restMiniLeft: number | null;
   activeSessionMini: { id: string; elapsed: number } | null;
   onNavigate: (view: ActiveView) => void;
-  onOpenNotifications: () => void;
   onOpenProfileSheet: () => void;
   onResumeActiveSession: (id: string) => void;
   children: React.ReactNode;
@@ -63,7 +61,6 @@ export function NavigationShell({
   restMiniLeft,
   activeSessionMini,
   onNavigate,
-  onOpenNotifications,
   onOpenProfileSheet,
   onResumeActiveSession,
   children,
@@ -320,27 +317,6 @@ export function NavigationShell({
               type="button"
               onClick={() => {
                 haptic('light');
-                onOpenNotifications();
-              }}
-              aria-label="Notificaciones"
-              className={`tf-tap relative w-10 h-10 flex items-center justify-center border cursor-pointer ${
-                unreadNotifications > 0
-                  ? 'border-[var(--ac2)]/65 bg-[var(--ac)]/20 text-[var(--ac2)]'
-                  : 'border-[var(--line)] bg-[var(--surface)] text-[var(--mut)] hover:text-[var(--ac2)]'
-              } ${os === 'ios' ? 'rounded-[14px]' : 'rounded-full'}`}
-            >
-              <Bell className="w-4.5 h-4.5" />
-              {unreadNotifications > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#A259FF] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[var(--bg)] tabular-nums">
-                  {unreadNotifications > 9 ? '9+' : unreadNotifications}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                haptic('light');
                 onOpenProfileSheet();
               }}
               aria-label="Mi perfil"
@@ -351,7 +327,7 @@ export function NavigationShell({
               } ${os === 'ios' ? 'rounded-[14px]' : 'rounded-full'}`}
             >
               <User className="w-5 h-5" />
-              {hasPendingInvites && (
+              {(hasPendingInvites || unreadNotifications > 0) && (
                 <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-pink-500 border-2 border-[var(--bg)]" />
               )}
             </button>

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { BellRing, CheckCircle2, Maximize2, X } from 'lucide-react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+  type User,
+} from 'firebase/auth';
 import {
   arrayUnion,
   collection,
@@ -49,6 +55,7 @@ import {
   add,
   buildCircuitIntervalPlan,
   cleanName,
+  createEmptyAuthState,
   exFrom,
   extractCircuitTargets,
   fdateShort,
@@ -121,6 +128,7 @@ import type {
 
 const ROLE_CACHE_KEY = 'plan_v1_role';
 const REST_STORAGE_KEY = 'plan_v1_rest';
+const PENDING_SIGNUP_NAME_KEY = 'plan_v1_pending_signup_name';
 
 const EMPTY_ROLE: UserRoleState = {
   ok: false,
@@ -153,6 +161,45 @@ function safeDocDataToMeta(raw: unknown): Record<string, unknown> | null {
   }
   if (typeof raw === 'object') return raw as Record<string, unknown>;
   return null;
+}
+
+function resolveAthleteCanonicalName(params: {
+  user: User;
+  userData?: Record<string, unknown> | null;
+  remoteMeta?: Record<string, unknown> | null;
+  remoteCplans?: Record<string, unknown> | null;
+  fallbackName?: string;
+}): string {
+  const { user, userData, remoteMeta, remoteCplans, fallbackName } = params;
+
+  const cplanKeys = remoteCplans
+    ? Object.keys(remoteCplans)
+        .map((k) => cleanName(k))
+        .filter(Boolean)
+    : [];
+  if (cplanKeys.length > 0) return cplanKeys[0];
+
+  const athField = cleanName(String(userData?.ath || ''));
+  if (athField) return athField;
+
+  const metaUsers = Array.isArray(remoteMeta?.users)
+    ? (remoteMeta.users as unknown[]).map((u) => cleanName(String(u || ''))).filter(Boolean)
+    : [];
+  if (metaUsers.length > 0) return metaUsers[0];
+
+  const docName = cleanName(String(userData?.name || ''));
+  if (docName) return docName;
+
+  const displayName = cleanName(user.displayName || '');
+  if (displayName) return displayName;
+
+  const emailName = cleanName((user.email || '').split('@')[0] || '');
+  if (emailName) return emailName;
+
+  const fb = cleanName(fallbackName || '');
+  if (fb) return fb;
+
+  return 'Atleta';
 }
 
 function parseFirestoreSession(
@@ -196,7 +243,7 @@ function buildFirestoreSessionPayload(s: TrainingSession) {
 
   return stripUndefined({
     id: String(s.id).slice(0, 128),
-    user: String(s.user || 'vale').slice(0, 60),
+    user: String(s.user || '').slice(0, 60),
     date: safeDate,
     sport: String(s.sport || 'Gimnasio').slice(0, 40),
     name: s.name !== undefined ? String(s.name).slice(0, 140) : undefined,
@@ -287,12 +334,22 @@ function MainApp() {
   const pushTimerRef = useRef<number | null>(null);
   const pushInFlightRef = useRef(false);
   const pushAgainRef = useRef(false);
-  const skipPushCountRef = useRef(0);
+  const remoteStatesRef = useRef<WeakSet<AppState>>(new WeakSet());
   const toastTimerRef = useRef<number | null>(null);
   const notifBannerTimerRef = useRef<number | null>(null);
   const notifWmRef = useRef<NotificationWatermark>({});
   const lastRestTickSecRef = useRef<number>(-1);
   const completedCircuitSessionRef = useRef<string | null>(null);
+  const athleteNameRef = useRef<string>('');
+  const studentNameByUidRef = useRef<Record<string, string>>({});
+  const pendingSignupNameRef = useRef<string>('');
+  const prevAuthUidRef = useRef<string | null>(null);
+  const authEpochRef = useRef(0);
+
+  const markRemoteState = useCallback((stateObj: AppState): AppState => {
+    remoteStatesRef.current.add(stateObj);
+    return stateObj;
+  }, []);
 
   // Interval config derived from S.iv
   const ivMode: IntervalMode = S.iv?.m || 'tabata';
@@ -502,9 +559,17 @@ function MainApp() {
     if (!user || !readyRef.current || !user.emailVerified) return;
     const cur = stateRef.current;
     const r = roleRef.current;
+    const isTrainer = r.role === 'trainer';
     const hasAccess =
-      r.role === 'trainer' || r.admin || (myDocRef.current.coaches?.length || 0) > 0;
+      isTrainer || r.admin || (myDocRef.current.coaches?.length || 0) > 0;
     if (!hasAccess) return;
+
+    const effectiveAth = !isTrainer
+      ? athleteNameRef.current ||
+        cur.user ||
+        resolveAthleteCanonicalName({ user, fallbackName: 'Atleta' })
+      : cur.user;
+    if (!isTrainer && !effectiveAth) return;
 
     if (pushInFlightRef.current) {
       pushAgainRef.current = true;
@@ -516,15 +581,32 @@ function MainApp() {
       // 1. Sync own user meta if changed (stored as JSON string to match original trazikfit-5fafa)
       const cleanAnnex = getSyncableAnnexes(cur.annex);
       const ownPlans: Record<string, MonthPlan[]> = {};
-      for (const [k, v] of Object.entries(cur.plans || {})) {
-        if (!cur.linked?.[k]) ownPlans[k] = v;
+      if (isTrainer) {
+        for (const [k, v] of Object.entries(cur.plans || {})) {
+          if (!cur.linked?.[k]) ownPlans[k] = v;
+        }
+      } else {
+        ownPlans[effectiveAth] = cur.plans?.[effectiveAth] || [];
       }
+      const ownUsers = isTrainer
+        ? cur.users.filter((u) => !cur.linked?.[u])
+        : [effectiveAth];
+      const ownPrs = isTrainer
+        ? cur.prs || []
+        : (cur.prs || []).filter((p) => p.user === effectiveAth);
+      const ownPrx = isTrainer
+        ? cur.prx || []
+        : (cur.prx || []).filter((p) => p.user === effectiveAth);
+      const ownBwh = isTrainer
+        ? cur.bwh || []
+        : (cur.bwh || []).filter((b) => b.user === effectiveAth);
+
       const metaObj = stripUndefined({
-        users: cur.users.filter((u) => !cur.linked?.[u]),
+        users: ownUsers,
         plans: ownPlans,
-        prs: cur.prs || [],
-        prx: cur.prx || [],
-        bwh: cur.bwh || [],
+        prs: ownPrs,
+        prx: ownPrx,
+        bwh: ownBwh,
         annex: cleanAnnex,
         axs: cur.axs ?? 1,
       });
@@ -532,15 +614,16 @@ function MainApp() {
       if (metaSerialized !== lastPushedMetaRef.current) {
         const nowTs = Date.now();
         lastPushedMetaRef.current = metaSerialized;
+        const fallbackAthName =
+          cleanName(user.displayName || '') ||
+          (user.email || '').split('@')[0] ||
+          'Atleta';
         await updateDoc(
           doc(db, 'users', user.uid),
           stripUndefined({
-            name:
-              cleanName(user.displayName || '') ||
-              (user.email || '').split('@')[0] ||
-              'Usuario',
+            name: fallbackAthName,
             email: (user.email || '').toLowerCase(),
-            ath: String(cur.user || 'vale').slice(0, 60),
+            ath: String(effectiveAth || fallbackAthName).slice(0, 60),
             ts: nowTs,
             meta: metaSerialized,
           })
@@ -548,7 +631,7 @@ function MainApp() {
       }
 
       // 2. Sync trainer-modified plans for linked athletes (JSON string matching trazikfit-5fafa)
-      if (r.role === 'trainer') {
+      if (isTrainer) {
         for (const [ath, stuUid] of Object.entries(cur.linked || {})) {
           const athPlans = cur.plans[ath] || [];
           const serialized = JSON.stringify(athPlans);
@@ -569,9 +652,12 @@ function MainApp() {
       const nextSessionMap = new Map<string, string>();
       for (const s of cur.sessions) {
         if (!s.id) continue;
-        const targetUid = cur.linked?.[s.user] || user.uid;
-        if (targetUid !== user.uid && r.role !== 'trainer') continue;
-        const payload = buildFirestoreSessionPayload(s);
+        if (!isTrainer && s.user !== effectiveAth) continue;
+        const targetUid = isTrainer ? cur.linked?.[s.user] || user.uid : user.uid;
+        if (targetUid !== user.uid && !isTrainer) continue;
+        const payload = buildFirestoreSessionPayload(
+          isTrainer ? s : { ...s, user: effectiveAth }
+        );
         const key = `${targetUid}/${s.id}`;
         const json = JSON.stringify(payload);
         nextSessionMap.set(key, json);
@@ -609,18 +695,45 @@ function MainApp() {
 
   useEffect(() => {
     if (!me || !ready) return;
-    if (skipPushCountRef.current > 0) {
-      skipPushCountRef.current -= 1;
+    if (remoteStatesRef.current.has(S)) {
+      remoteStatesRef.current.delete(S);
       return;
     }
     if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
     pushTimerRef.current = window.setTimeout(() => {
+      pushTimerRef.current = null;
       void performCloudPush();
-    }, 650);
+    }, 250);
     return () => {
-      if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
+      if (pushTimerRef.current) {
+        window.clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+      }
     };
   }, [S, me, ready, performCloudPush]);
+
+  useEffect(() => {
+    const flushOnHide = () => {
+      if (document.visibilityState === 'hidden' && pushTimerRef.current && meRef.current && readyRef.current) {
+        window.clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+        void performCloudPush();
+      }
+    };
+    const flushBeforeUnload = () => {
+      if (pushTimerRef.current && meRef.current && readyRef.current) {
+        window.clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+        void performCloudPush();
+      }
+    };
+    document.addEventListener('visibilitychange', flushOnHide);
+    window.addEventListener('pagehide', flushBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', flushOnHide);
+      window.removeEventListener('pagehide', flushBeforeUnload);
+    };
+  }, [performCloudPush]);
 
   const stopCloudListeners = useCallback(() => {
     cloudUnsubsRef.current.forEach((u) => u());
@@ -629,14 +742,73 @@ function MainApp() {
     studentUnsubsRef.current = {};
   }, []);
 
+  const clearAccountState = useCallback(
+    (clearStorage: boolean, prevUid?: string | null) => {
+      stopCloudListeners();
+      if (pushTimerRef.current) {
+        window.clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+      }
+      pushAgainRef.current = false;
+      lastPushedSessionsRef.current = new Map();
+      lastPushedMetaRef.current = '';
+      lastPushedPlansRef.current = {};
+      athleteNameRef.current = '';
+      studentNameByUidRef.current = {};
+      notifWmRef.current = {};
+      completedCircuitSessionRef.current = null;
+
+      setActiveSessionId(null);
+      setLastActiveSessionId(null);
+      setDayPickerDate(null);
+      setProfileSheetOpen(false);
+      setCloudSheetOpen(false);
+      setImportSheetOpen(false);
+      setDeleteAthleteTarget(null);
+      setNotificationsSheetOpen(false);
+      setNotifBanner(null);
+      setRestTimer(null);
+      setStopwatch(null);
+      setIntervalRunner(null);
+      setLastCircuitTarget(null);
+      releaseWakeLock();
+
+      try {
+        localStorage.removeItem(REST_STORAGE_KEY);
+        localStorage.removeItem(ROLE_CACHE_KEY);
+        if (prevUid) {
+          localStorage.removeItem(`${ROLE_CACHE_KEY}_${prevUid}`);
+        }
+        if (clearStorage) {
+          localStorage.removeItem('plan_v1');
+          localStorage.removeItem('plan_v1_cloud_ctx');
+          localStorage.removeItem('plan_v1_demo4');
+          localStorage.removeItem(PENDING_SIGNUP_NAME_KEY);
+          pendingSignupNameRef.current = '';
+        }
+      } catch {
+        // ignore storage errors
+      }
+
+      setS((prev) => markRemoteState(createEmptyAuthState(prev)));
+    },
+    [stopCloudListeners, markRemoteState]
+  );
+
   // Firebase Auth listener + cloud bootstrap
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      const myEpoch = ++authEpochRef.current;
+      const prevUid = prevAuthUidRef.current;
       setAuthResolved(true);
       stopCloudListeners();
-      if (pushTimerRef.current) window.clearTimeout(pushTimerRef.current);
+      if (pushTimerRef.current) {
+        window.clearTimeout(pushTimerRef.current);
+        pushTimerRef.current = null;
+      }
 
       if (!user) {
+        prevAuthUidRef.current = null;
         setMe(null);
         setReady(false);
         setInvLoaded(false);
@@ -645,12 +817,32 @@ function MainApp() {
         setInvIn([]);
         setInvOut([]);
         setNotifications([]);
-        setNotifBanner(null);
-        notifWmRef.current = {};
-        lastPushedSessionsRef.current = new Map();
-        lastPushedMetaRef.current = '';
-        lastPushedPlansRef.current = {};
+        clearAccountState(true, prevUid);
         return;
+      }
+
+      const cloudCtx = `trazikfit-5fafa:${user.uid}`;
+      let storedCtx: string | null = null;
+      try {
+        storedCtx = localStorage.getItem('plan_v1_cloud_ctx');
+      } catch {
+        // ignore
+      }
+      const isDifferentAccount =
+        storedCtx !== cloudCtx || (prevUid !== null && prevUid !== user.uid);
+
+      prevAuthUidRef.current = user.uid;
+
+      if (isDifferentAccount) {
+        clearAccountState(false, prevUid);
+        setMyDoc({});
+        setInvIn([]);
+        setInvOut([]);
+        try {
+          localStorage.setItem('plan_v1_cloud_ctx', cloudCtx);
+        } catch {
+          // ignore
+        }
       }
 
       setMe(user);
@@ -664,12 +856,37 @@ function MainApp() {
       const emailLower = (user.email || '').toLowerCase();
       const isOwner = user.emailVerified && OWNER_EMAILS.includes(emailLower);
 
+      // Consume pending signup name chosen by the athlete in LoginView ("Crear cuenta")
+      let pendingName = cleanName(pendingSignupNameRef.current || '');
+      if (!pendingName) {
+        try {
+          pendingName = cleanName(localStorage.getItem(PENDING_SIGNUP_NAME_KEY) || '');
+        } catch {
+          // ignore
+        }
+      }
+      pendingSignupNameRef.current = '';
+      try {
+        localStorage.removeItem(PENDING_SIGNUP_NAME_KEY);
+      } catch {
+        // ignore
+      }
+      if (pendingName) {
+        try {
+          await updateProfile(user, { displayName: pendingName });
+        } catch {
+          // ignore non-fatal auth profile update error
+        }
+      }
+      if (authEpochRef.current !== myEpoch) return;
+
       try {
         // 1. Owner bootstrap (singleton + role doc only if not yet present in trazikfit-5fafa)
         if (isOwner) {
           try {
             const ownerRef = doc(db, 'config', 'owner');
             const ownerSnap = await getDoc(ownerRef);
+            if (authEpochRef.current !== myEpoch) return;
             if (!ownerSnap.exists()) {
               await setDoc(ownerRef, {
                 uid: user.uid,
@@ -679,6 +896,7 @@ function MainApp() {
             }
             const roleRef = doc(db, 'roles', user.uid);
             const roleSnap = await getDoc(roleRef);
+            if (authEpochRef.current !== myEpoch) return;
             const rData = roleSnap.data();
             if (!roleSnap.exists() || rData?.role !== 'trainer' || !rData?.admin) {
               await setDoc(
@@ -702,16 +920,19 @@ function MainApp() {
             // ignore if already pinned by UID or transient check
           }
         }
+        if (authEpochRef.current !== myEpoch) return;
 
-        // 2. Directory upsert
+        // 2. Directory upsert (prefer explicit athlete signup name)
         if (user.emailVerified && emailLower) {
           try {
             const dirRef = doc(db, 'directory', user.uid);
             const dirSnap = await getDoc(dirRef);
+            if (authEpochRef.current !== myEpoch) return;
             const dispName =
+              pendingName ||
               cleanName(user.displayName || '') ||
               emailLower.split('@')[0].slice(0, 30) ||
-              'Usuario';
+              'Atleta';
             await setDoc(
               dirRef,
               stripUndefined({
@@ -726,11 +947,14 @@ function MainApp() {
             // ignore directory non-fatal error
           }
         }
+        if (authEpochRef.current !== myEpoch) return;
 
-        // 3. Load Role directly from Firestore roles/{uid}
+        // 3. Load Role directly from Firestore roles/{uid} (role cache strictly scoped by uid)
+        const scopedRoleCacheKey = `${ROLE_CACHE_KEY}_${user.uid}`;
         let resolvedRole: UserRoleState;
         try {
           const rSnap = await getDoc(doc(db, 'roles', user.uid));
+          if (authEpochRef.current !== myEpoch) return;
           if (rSnap.exists()) {
             const d = rSnap.data();
             resolvedRole = {
@@ -760,7 +984,7 @@ function MainApp() {
         } catch (err) {
           let cached: UserRoleState | null = null;
           try {
-            const raw = localStorage.getItem(ROLE_CACHE_KEY);
+            const raw = localStorage.getItem(scopedRoleCacheKey);
             if (raw) cached = JSON.parse(raw) as UserRoleState;
           } catch {
             // ignore
@@ -778,77 +1002,138 @@ function MainApp() {
                 });
         }
         try {
-          localStorage.setItem(ROLE_CACHE_KEY, JSON.stringify(resolvedRole));
+          localStorage.removeItem(ROLE_CACHE_KEY);
+          localStorage.setItem(scopedRoleCacheKey, JSON.stringify(resolvedRole));
         } catch {
           // ignore
         }
+        if (authEpochRef.current !== myEpoch) return;
         setRoleState(resolvedRole);
 
-        // Apply role to app state & invalidate stale timestamps from any other Firebase project/account
         const isCoachAccount = resolvedRole.role === 'trainer';
-        const cloudCtx = `trazikfit-5fafa:${user.uid}`;
-        let cloudCtxChanged = false;
-        try {
-          cloudCtxChanged = localStorage.getItem('plan_v1_cloud_ctx') !== cloudCtx;
-          if (cloudCtxChanged) {
-            localStorage.setItem('plan_v1_cloud_ctx', cloudCtx);
-          }
-        } catch {
-          // ignore
-        }
-        skipPushCountRef.current += 1;
-        setS((prev) => ({
-          ...prev,
-          ...(cloudCtxChanged ? { mts: 0, cts: 0, linked: {} } : {}),
-          role: isCoachAccount ? 'coach' : 'atleta',
-          local: false,
-          view: !isCoachAccount && prev.view === 'team' ? 'month' : prev.view,
-        }));
 
-        // 4. Ensure users/{uid} exists without overwriting existing trazikfit-5fafa user data
+        // 4. Read/create users/{uid} cleanly (100% blank state for brand-new accounts until coach plans)
         const userDocRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userDocRef);
+        if (authEpochRef.current !== myEpoch) return;
         const userDocExisted = userSnap.exists();
+        let initialUserData: Record<string, unknown> | null = null;
+
         if (userDocExisted) {
-          const existingData = userSnap.data();
+          const existingData = userSnap.data() as Record<string, unknown>;
+          initialUserData = existingData;
+          if (pendingName && !isCoachAccount && user.emailVerified) {
+            await updateDoc(
+              userDocRef,
+              stripUndefined({
+                name: pendingName,
+                ath: pendingName.slice(0, 60),
+                ts: Date.now(),
+              })
+            );
+            if (authEpochRef.current !== myEpoch) return;
+            initialUserData = {
+              ...existingData,
+              name: pendingName,
+              ath: pendingName.slice(0, 60),
+            };
+          }
           setMyDoc({
-            coaches: existingData.coaches || [],
-            cn: existingData.cn || {},
+            coaches: (initialUserData.coaches as string[]) || [],
+            cn: (initialUserData.cn as Record<string, string>) || {},
           });
-          // Track existing remote meta signature immediately so local demo state never pushes over it
-          const existingMetaObj = safeDocDataToMeta(existingData.meta);
+          // Track existing remote meta signature immediately so local cache never overwrites remote
+          const existingMetaObj = safeDocDataToMeta(initialUserData.meta);
           if (existingMetaObj) {
             lastPushedMetaRef.current = JSON.stringify(existingMetaObj);
           }
         } else if (user.emailVerified) {
           const dispName =
+            pendingName ||
             cleanName(user.displayName || '') ||
             emailLower.split('@')[0].slice(0, 30) ||
-            'Usuario';
-          await setDoc(
-            userDocRef,
-            stripUndefined({
-              coaches: [],
-              cn: {},
-              name: dispName,
-              email: emailLower,
-              ath: dispName.slice(0, 60),
-              ts: 0,
-            })
-          );
+            'Atleta';
+          const blankMeta = JSON.stringify({
+            users: isCoachAccount ? [] : [dispName.slice(0, 60)],
+            plans: isCoachAccount ? {} : { [dispName.slice(0, 60)]: [] },
+            prs: [],
+            prx: [],
+            bwh: [],
+            annex: [],
+            axs: 1,
+          });
+          initialUserData = {
+            coaches: [],
+            cn: {},
+            name: dispName,
+            email: emailLower,
+            ath: dispName.slice(0, 60),
+            ts: 0,
+            meta: blankMeta,
+          };
+          await setDoc(userDocRef, stripUndefined(initialUserData));
+          if (authEpochRef.current !== myEpoch) return;
+          lastPushedMetaRef.current = blankMeta;
         }
+
+        // Resolve canonical athlete identity from authenticated Google account + Firestore users/{uid}
+        const initialMetaObj = safeDocDataToMeta(initialUserData?.meta);
+        const initialCplansObj = safeDocDataToMeta(initialUserData?.cplans);
+        const initialAthName = !isCoachAccount
+          ? pendingName ||
+            resolveAthleteCanonicalName({
+              user,
+              userData: initialUserData,
+              remoteMeta: initialMetaObj,
+              remoteCplans: initialCplansObj,
+            })
+          : '';
+        athleteNameRef.current = initialAthName;
+
+        setS((prev) => {
+          const base = isDifferentAccount ? createEmptyAuthState(prev) : prev;
+          if (!isCoachAccount) {
+            const ownSess = base.sessions.filter((s) => s.user === initialAthName);
+            const ownPlans = base.plans[initialAthName] ? { [initialAthName]: base.plans[initialAthName] } : {};
+            return markRemoteState({
+              ...base,
+              ...(isDifferentAccount ? { mts: 0, cts: 0 } : {}),
+              linked: {},
+              users: [initialAthName],
+              user: initialAthName,
+              plans: ownPlans,
+              sessions: ownSess,
+              pm: 0,
+              role: 'atleta',
+              local: false,
+              view: base.view === 'team' ? 'month' : base.view,
+            });
+          }
+          return markRemoteState({
+            ...base,
+            ...(isDifferentAccount ? { mts: 0, cts: 0, linked: {} } : {}),
+            role: 'coach',
+            local: false,
+          });
+        });
 
         // Readiness gate: wait until initial snapshots resolve before enabling cloud pushes
         let ownDocDone = false;
         let ownSessionsDone = false;
         let studentsDone = !isCoachAccount;
         const checkInitialReady = () => {
-          if (ownDocDone && ownSessionsDone && studentsDone && meRef.current?.uid === user.uid) {
+          if (
+            authEpochRef.current === myEpoch &&
+            ownDocDone &&
+            ownSessionsDone &&
+            studentsDone &&
+            meRef.current?.uid === user.uid
+          ) {
             setReady(true);
           }
         };
         const readinessFallback = window.setTimeout(() => {
-          if (meRef.current?.uid === user.uid) {
+          if (authEpochRef.current === myEpoch && meRef.current?.uid === user.uid) {
             setReady(true);
           }
         }, 7000);
@@ -857,9 +1142,13 @@ function MainApp() {
         const unsubOwnDoc = onSnapshot(
           userDocRef,
           (snap) => {
+            if (authEpochRef.current !== myEpoch) return;
             if (!snap.metadata.hasPendingWrites && snap.exists()) {
-              const d = snap.data();
-              setMyDoc({ coaches: d.coaches || [], cn: d.cn || {} });
+              const d = snap.data() as Record<string, unknown>;
+              setMyDoc({
+                coaches: (d.coaches as string[]) || [],
+                cn: (d.cn as Record<string, string>) || {},
+              });
 
               const remoteMeta = safeDocDataToMeta(d.meta);
               const remoteCplans = safeDocDataToMeta(d.cplans);
@@ -867,6 +1156,159 @@ function MainApp() {
               const remoteCts = Number(d.cts || 0);
 
               setS((prev) => {
+                if (!isCoachAccount) {
+                  const canonicalName = resolveAthleteCanonicalName({
+                    user,
+                    userData: d,
+                    remoteMeta,
+                    remoteCplans,
+                    fallbackName: athleteNameRef.current || prev.user,
+                  });
+                  athleteNameRef.current = canonicalName;
+
+                  let changed =
+                    prev.user !== canonicalName ||
+                    prev.users.length !== 1 ||
+                    prev.users[0] !== canonicalName ||
+                    Object.keys(prev.linked || {}).length > 0 ||
+                    prev.role !== 'atleta' ||
+                    prev.sessions.some((sess) => sess.user !== canonicalName);
+
+                  let next: AppState = {
+                    ...prev,
+                    role: 'atleta',
+                    local: false,
+                    linked: {},
+                    users: [canonicalName],
+                    user: canonicalName,
+                    sessions: prev.sessions
+                      .filter(
+                        (sess) =>
+                          sess.user === canonicalName ||
+                          (Boolean(prev.user) && sess.user === prev.user)
+                      )
+                      .map((sess) => ({ ...sess, user: canonicalName })),
+                  };
+
+                  if (
+                    remoteMeta &&
+                    (remoteTs > (prev.mts || 0) || (!ownDocDone && remoteTs >= (prev.mts || 0)))
+                  ) {
+                    const san = sanRemote(remoteMeta) as Partial<AppState>;
+                    const localDataImages = (prev.annex || []).filter(
+                      (a) => a.kind === 'img' && String(a.src || '').startsWith('data:')
+                    );
+                    const remoteAnnexes = Array.isArray(san.annex) ? san.annex : [];
+                    const mergedAnnex = [...remoteAnnexes];
+                    localDataImages.forEach((img) => {
+                      if (!mergedAnnex.some((a) => a.id === img.id)) mergedAnnex.push(img);
+                    });
+
+                    const sanPlans = (san.plans || {}) as Record<string, MonthPlan[]>;
+                    let matchedMetaPlans: MonthPlan[] = [];
+                    if (sanPlans[canonicalName]) {
+                      matchedMetaPlans = sanPlans[canonicalName];
+                    } else {
+                      const ciMatch = Object.entries(sanPlans).find(
+                        ([k]) => nz(k) === nz(canonicalName)
+                      );
+                      if (ciMatch) {
+                        matchedMetaPlans = ciMatch[1];
+                      } else {
+                        const firstEntry = Object.values(sanPlans)[0];
+                        if (Array.isArray(firstEntry)) matchedMetaPlans = firstEntry;
+                      }
+                    }
+
+                    const athFieldLower = String(d.ath || '').trim().toLowerCase();
+                    const allowNormalizedUser = (u?: string) => {
+                      const low = (u || '').trim().toLowerCase();
+                      if (!low) return true;
+                      if (nz(u || '') === nz(canonicalName)) return true;
+                      return Boolean(athFieldLower) && low === athFieldLower;
+                    };
+
+                    const ownPrs = Array.isArray(san.prs)
+                      ? san.prs
+                          .filter((x) => allowNormalizedUser(x.user))
+                          .map((x) => ({ ...x, user: canonicalName }))
+                      : prev.prs.filter((x) => x.user === canonicalName);
+                    const ownPrx = Array.isArray(san.prx)
+                      ? san.prx
+                          .filter((x) => allowNormalizedUser(x.user))
+                          .map((x) => ({ ...x, user: canonicalName }))
+                      : prev.prx.filter((x) => x.user === canonicalName);
+                    const ownBwh = Array.isArray(san.bwh)
+                      ? san.bwh
+                          .filter((x) => allowNormalizedUser(x.user))
+                          .map((x) => ({ ...x, user: canonicalName }))
+                      : prev.bwh.filter((x) => x.user === canonicalName);
+
+                    const existingPlanList = next.plans?.[canonicalName] || [];
+                    const combinedPlanList = matchedMetaPlans.length
+                      ? matchedMetaPlans
+                      : existingPlanList;
+
+                    next = {
+                      ...next,
+                      plans: { [canonicalName]: combinedPlanList },
+                      prs: ownPrs,
+                      prx: ownPrx,
+                      bwh: ownBwh,
+                      annex: mergedAnnex,
+                      axs: typeof san.axs === 'number' ? san.axs : prev.axs,
+                      mts: remoteTs,
+                    };
+                    changed = true;
+                  }
+
+                  const hasRemoteCplans =
+                    remoteCplans !== null &&
+                    (remoteCts > (prev.cts || 0) ||
+                      (!ownDocDone && remoteCts >= (prev.cts || 0)) ||
+                      (Object.keys(remoteCplans).length > 0 &&
+                        !(next.plans?.[canonicalName]?.length)));
+
+                  if (hasRemoteCplans && remoteCplans) {
+                    const sanCp = sanRemote(remoteCplans) as Record<string, MonthPlan[]>;
+                    const mergedPlans: MonthPlan[] = [];
+                    const seenPlanIds = new Set<string>();
+                    Object.values(sanCp).forEach((arr) => {
+                      (arr || []).forEach((m) => {
+                        if (!m) return;
+                        const pid = m.id || '';
+                        if (pid && seenPlanIds.has(pid)) return;
+                        if (pid) seenPlanIds.add(pid);
+                        mergedPlans.push(m);
+                      });
+                    });
+
+                    next = {
+                      ...next,
+                      plans: { [canonicalName]: mergedPlans },
+                      cts: Math.max(remoteCts, prev.cts || 0),
+                    };
+                    changed = true;
+                  }
+
+                  if (changed) {
+                    lastPushedMetaRef.current = JSON.stringify(
+                      stripUndefined({
+                        users: [canonicalName],
+                        plans: { [canonicalName]: next.plans?.[canonicalName] || [] },
+                        prs: next.prs,
+                        prx: next.prx,
+                        bwh: next.bwh,
+                        annex: getSyncableAnnexes(next.annex),
+                        axs: next.axs,
+                      })
+                    );
+                    return markRemoteState(normalizeState(next));
+                  }
+                  return prev;
+                }
+
+                // Coach/Trainer doc sync
                 let changed = false;
                 let next = { ...prev };
 
@@ -897,18 +1339,17 @@ function MainApp() {
                     new Set([...remoteUsers, ...Object.keys(prev.linked || {})])
                   );
 
-                  // Clean any leftover local demo sessions if remote user list does not contain them
                   const validUsersSet = new Set(mergedUsers);
                   const filteredSessions = prev.sessions.filter((sess) => validUsersSet.has(sess.user));
 
                   next = {
                     ...next,
-                    users: mergedUsers.length ? mergedUsers : [cleanName(d.ath || d.name || 'Usuario') || 'Usuario'],
+                    users: mergedUsers,
                     user: mergedUsers.includes(prev.user)
                       ? prev.user
                       : mergedUsers.includes(String(d.ath || ''))
                       ? String(d.ath)
-                      : mergedUsers[0] || prev.user,
+                      : mergedUsers[0] || '',
                     plans: nextPlans,
                     sessions: filteredSessions,
                     prs: Array.isArray(san.prs) ? san.prs : prev.prs,
@@ -945,8 +1386,7 @@ function MainApp() {
                 }
 
                 if (changed) {
-                  skipPushCountRef.current += 1;
-                  return normalizeState(next);
+                  return markRemoteState(normalizeState(next));
                 }
                 return prev;
               });
@@ -980,26 +1420,72 @@ function MainApp() {
         );
         cloudUnsubsRef.current.push(unsubOwnDoc);
 
-        // 6. Own sessions listener (supports original { j: string, ts } and flat documents)
+        // 6. Own sessions listener (authoritative per-UID subcollection)
         const unsubOwnSessions = onSnapshot(
           collection(db, 'users', user.uid, 'sessions'),
           (snap) => {
+            if (authEpochRef.current !== myEpoch) return;
             if (!snap.metadata.hasPendingWrites) {
+              const athCanonical = !isCoachAccount
+                ? athleteNameRef.current ||
+                  stateRef.current.user ||
+                  resolveAthleteCanonicalName({ user, userData: initialUserData })
+                : undefined;
+
               const remoteList: TrainingSession[] = [];
               snap.forEach((docSnap) => {
-                const parsed = parseFirestoreSession(
-                  docSnap.id,
-                  docSnap.data() as Record<string, unknown>
+                const rawDoc = docSnap.data() as Record<string, unknown>;
+                const rawParsed = parseFirestoreSession(docSnap.id, rawDoc);
+                if (!rawParsed) return;
+                remoteList.push(
+                  athCanonical ? { ...rawParsed, user: athCanonical } : rawParsed
                 );
-                if (parsed) remoteList.push(parsed);
               });
 
               setS((prev) => {
+                if (!isCoachAccount) {
+                  const activeAth = athleteNameRef.current || prev.user || athCanonical || 'Atleta';
+                  const normalizedOwn = remoteList.map((s) => ({ ...s, user: activeAth }));
+                  const dirtyLocalById = new Map<string, TrainingSession>();
+                  prev.sessions.forEach((ls) => {
+                    if (!ls.id || ls.user !== activeAth) return;
+                    const key = `${user.uid}/${ls.id}`;
+                    const localJson = JSON.stringify(buildFirestoreSessionPayload(ls));
+                    if (lastPushedSessionsRef.current.get(key) !== localJson) {
+                      dirtyLocalById.set(ls.id, ls);
+                    }
+                  });
+
+                  for (const key of Array.from(lastPushedSessionsRef.current.keys())) {
+                    if (key.startsWith(`${user.uid}/`)) {
+                      lastPushedSessionsRef.current.delete(key);
+                    }
+                  }
+                  const mergedOwn = normalizedOwn.map((rs) => {
+                    const key = `${user.uid}/${rs.id}`;
+                    lastPushedSessionsRef.current.set(
+                      key,
+                      JSON.stringify(buildFirestoreSessionPayload(rs))
+                    );
+                    const dirty = dirtyLocalById.get(rs.id);
+                    if (dirty && Number(dirty.ts || 0) > Number(rs.ts || 0)) {
+                      return dirty;
+                    }
+                    return rs;
+                  });
+                  return markRemoteState({
+                    ...prev,
+                    user: activeAth,
+                    users: [activeAth],
+                    linked: {},
+                    sessions: mergedOwn,
+                  });
+                }
+
                 const linkedUserNames = new Set(Object.keys(prev.linked || {}));
                 const studentSessions = prev.sessions.filter((s) => linkedUserNames.has(s.user));
                 const remoteOwn = remoteList.filter((s) => !linkedUserNames.has(s.user));
 
-                // Rebuild cache entries for user.uid so remote deletes aren't resurrected
                 for (const key of Array.from(lastPushedSessionsRef.current.keys())) {
                   if (key.startsWith(`${user.uid}/`)) {
                     lastPushedSessionsRef.current.delete(key);
@@ -1013,13 +1499,11 @@ function MainApp() {
                   );
                 });
 
-                // Only preserve local unsynced sessions if user doc didn't exist yet AND remote is empty AND user isn't just demo
-                if (userDocExisted || remoteOwn.length > 0) {
-                  skipPushCountRef.current += 1;
-                  return {
+                if (userDocExisted || remoteOwn.length > 0 || isDifferentAccount) {
+                  return markRemoteState({
                     ...prev,
                     sessions: [...studentSessions, ...remoteOwn],
-                  };
+                  });
                 }
                 return prev;
               });
@@ -1139,59 +1623,97 @@ function MainApp() {
           const unsubStudents = onSnapshot(
             query(collection(db, 'users'), where('coaches', 'array-contains', user.uid)),
             (snap) => {
+              if (authEpochRef.current !== myEpoch || snap.metadata.hasPendingWrites) return;
               const nextLinked: Record<string, string> = {};
               const studentPlansMerge: Record<string, MonthPlan[]> = {};
+              const renamedPairs: Array<{ from: string; to: string }> = [];
 
               snap.forEach((stuDoc) => {
                 if (stuDoc.id === user.uid) return;
                 const d = stuDoc.data();
-                const athName =
-                  cleanName(d.ath || d.name || (d.email || '').split('@')[0]) ||
+                const rawAth = cleanName(String(d.ath || ''));
+                const resolvedStuAth =
+                  rawAth ||
+                  cleanName(String(d.name || '')) ||
+                  cleanName(String(d.email || '').split('@')[0]) ||
                   `Atleta_${stuDoc.id.slice(0, 4)}`;
-                nextLinked[athName] = stuDoc.id;
+
+                const prevStuAth = studentNameByUidRef.current[stuDoc.id];
+                if (prevStuAth && prevStuAth !== resolvedStuAth) {
+                  renamedPairs.push({ from: prevStuAth, to: resolvedStuAth });
+                }
+                studentNameByUidRef.current[stuDoc.id] = resolvedStuAth;
+                nextLinked[resolvedStuAth] = stuDoc.id;
 
                 const meta = safeDocDataToMeta(d.meta);
                 const cp = safeDocDataToMeta(d.cplans);
                 const metaPlans = (meta?.plans as Record<string, MonthPlan[]>) || {};
                 const cpPlans = (cp as Record<string, MonthPlan[]>) || {};
+                const cpKeys = Object.keys(cpPlans);
+                const firstCpPlans = cpKeys.length ? cpPlans[cpKeys[0]] : undefined;
+                const metaFallback = metaPlans[resolvedStuAth] || metaPlans[d.ath || ''] || [];
                 const chosenPlans =
-                  cpPlans[athName] ||
-                  metaPlans[athName] ||
-                  metaPlans[d.ath || ''] ||
-                  Object.values(metaPlans)[0] ||
-                  [];
-                studentPlansMerge[athName] = sanRemote(chosenPlans);
-                lastPushedPlansRef.current[athName] = JSON.stringify(studentPlansMerge[athName]);
+                  cpPlans[resolvedStuAth] ??
+                  (prevStuAth ? cpPlans[prevStuAth] : undefined) ??
+                  cpPlans[d.ath || ''] ??
+                  firstCpPlans ??
+                  metaFallback;
+                studentPlansMerge[resolvedStuAth] = sanRemote(chosenPlans);
 
                 // Attach session listener for this student if not yet attached
                 if (!studentUnsubsRef.current[stuDoc.id]) {
                   studentUnsubsRef.current[stuDoc.id] = onSnapshot(
                     collection(db, 'users', stuDoc.id, 'sessions'),
                     (sSnap) => {
-                      if (sSnap.metadata.hasPendingWrites) return;
+                      if (authEpochRef.current !== myEpoch || sSnap.metadata.hasPendingWrites) return;
+                      const liveAthName = studentNameByUidRef.current[stuDoc.id] || resolvedStuAth;
                       const stuSess: TrainingSession[] = [];
-                      for (const key of Array.from(lastPushedSessionsRef.current.keys())) {
-                        if (key.startsWith(`${stuDoc.id}/`)) {
-                          lastPushedSessionsRef.current.delete(key);
-                        }
-                      }
                       sSnap.forEach((sd) => {
-                        const mapped = parseFirestoreSession(
+                        const rawParsed = parseFirestoreSession(
                           sd.id,
-                          sd.data() as Record<string, unknown>,
-                          athName
+                          sd.data() as Record<string, unknown>
                         );
-                        if (!mapped) return;
-                        stuSess.push(mapped);
-                        lastPushedSessionsRef.current.set(
-                          `${stuDoc.id}/${sd.id}`,
-                          JSON.stringify(buildFirestoreSessionPayload(mapped))
-                        );
+                        if (!rawParsed) return;
+                        stuSess.push({ ...rawParsed, user: liveAthName });
                       });
+
                       setS((prev) => {
-                        const others = prev.sessions.filter((x) => x.user !== athName);
-                        skipPushCountRef.current += 1;
-                        return { ...prev, sessions: [...others, ...stuSess] };
+                        const dirtyLocalById = new Map<string, TrainingSession>();
+                        prev.sessions.forEach((ls) => {
+                          if (!ls.id || ls.user !== liveAthName) return;
+                          const key = `${stuDoc.id}/${ls.id}`;
+                          const localJson = JSON.stringify(buildFirestoreSessionPayload(ls));
+                          if (lastPushedSessionsRef.current.get(key) !== localJson) {
+                            dirtyLocalById.set(ls.id, ls);
+                          }
+                        });
+
+                        for (const key of Array.from(lastPushedSessionsRef.current.keys())) {
+                          if (key.startsWith(`${stuDoc.id}/`)) {
+                            lastPushedSessionsRef.current.delete(key);
+                          }
+                        }
+                        const mergedStu = stuSess.map((rs) => {
+                          const key = `${stuDoc.id}/${rs.id}`;
+                          lastPushedSessionsRef.current.set(
+                            key,
+                            JSON.stringify(buildFirestoreSessionPayload(rs))
+                          );
+                          const dirty = dirtyLocalById.get(rs.id);
+                          if (dirty && Number(dirty.ts || 0) > Number(rs.ts || 0)) {
+                            return dirty;
+                          }
+                          return rs;
+                        });
+                        // Also preserve brand-new local sessions created for this athlete awaiting push
+                        dirtyLocalById.forEach((dirty, sid) => {
+                          if (!mergedStu.some((m) => m.id === sid)) {
+                            mergedStu.push(dirty);
+                          }
+                        });
+
+                        const others = prev.sessions.filter((x) => x.user !== liveAthName);
+                        return markRemoteState({ ...prev, sessions: [...others, ...mergedStu] });
                       });
 
                       const wm = notifWmRef.current;
@@ -1209,11 +1731,11 @@ function MainApp() {
                           if (isStuInit && mapped.updatedBy === 'atleta') {
                             pushNotification(user.uid, {
                               kind: 'session_done',
-                              title: `${athName} finalizó su sesión`,
+                              title: `${liveAthName} finalizó su sesión`,
                               body: `${mapped.name || 'Entrenamiento'} · ${fdateShort(mapped.date)}`,
                               sessionId: mapped.id,
                               date: mapped.date,
-                              athleteName: athName,
+                              athleteName: liveAthName,
                             });
                           }
                           finishedMap[key] = finishedTs;
@@ -1240,6 +1762,7 @@ function MainApp() {
                 if (!activeIds.has(stuId)) {
                   unsub();
                   delete studentUnsubsRef.current[stuId];
+                  delete studentNameByUidRef.current[stuId];
                   for (const key of Array.from(lastPushedSessionsRef.current.keys())) {
                     if (key.startsWith(`${stuId}/`)) {
                       lastPushedSessionsRef.current.delete(key);
@@ -1249,31 +1772,67 @@ function MainApp() {
               }
 
               setS((prev) => {
+                const renameMap = new Map(renamedPairs.map((p) => [p.from, p.to]));
                 const removedLinkedNames = Object.keys(prev.linked || {}).filter(
-                  (ath) => !nextLinked[ath]
+                  (ath) => !nextLinked[ath] && !renameMap.has(ath)
                 );
                 const removedSet = new Set(removedLinkedNames);
-                const nextPlans = { ...prev.plans, ...studentPlansMerge };
+                const nextPlans = { ...prev.plans };
+
+                renamedPairs.forEach(({ from, to }) => {
+                  if (nextPlans[from] && !nextPlans[to]) {
+                    nextPlans[to] = nextPlans[from];
+                  }
+                  delete nextPlans[from];
+                  delete lastPushedPlansRef.current[from];
+                });
+
+                Object.entries(studentPlansMerge).forEach(([ath, remoteList]) => {
+                  const localList = prev.plans[ath];
+                  const localJson = localList ? JSON.stringify(localList) : '';
+                  const prevPushed = lastPushedPlansRef.current[ath];
+                  const hasPendingCoachEdit =
+                    Boolean(localList) &&
+                    prevPushed !== undefined &&
+                    localJson !== prevPushed &&
+                    (pushTimerRef.current !== null || pushInFlightRef.current);
+
+                  if (!hasPendingCoachEdit) {
+                    nextPlans[ath] = remoteList;
+                    lastPushedPlansRef.current[ath] = JSON.stringify(remoteList);
+                  }
+                });
+
                 removedLinkedNames.forEach((ath) => {
                   delete nextPlans[ath];
+                  delete lastPushedPlansRef.current[ath];
                 });
+
                 const nextUsers = Array.from(
                   new Set([
-                    ...prev.users.filter((u) => !removedSet.has(u)),
+                    ...prev.users
+                      .filter((u) => !removedSet.has(u))
+                      .map((u) => renameMap.get(u) || u),
                     ...Object.keys(nextLinked),
                   ])
                 );
-                const nextSessions = removedSet.size
-                  ? prev.sessions.filter((s) => !removedSet.has(s.user))
-                  : prev.sessions;
-                skipPushCountRef.current += 1;
-                return normalizeState({
-                  ...prev,
-                  linked: nextLinked,
-                  users: nextUsers,
-                  plans: nextPlans,
-                  sessions: nextSessions,
-                });
+                let nextSessions = prev.sessions
+                  .filter((s) => !removedSet.has(s.user))
+                  .map((s) =>
+                    renameMap.has(s.user) ? { ...s, user: renameMap.get(s.user)! } : s
+                  );
+                const nextActiveUser = renameMap.get(prev.user) || prev.user;
+
+                return markRemoteState(
+                  normalizeState({
+                    ...prev,
+                    user: nextActiveUser,
+                    linked: nextLinked,
+                    users: nextUsers,
+                    plans: nextPlans,
+                    sessions: nextSessions,
+                  })
+                );
               });
 
               if (!studentsDone) {
@@ -1303,7 +1862,7 @@ function MainApp() {
       unsubAuth();
       stopCloudListeners();
     };
-  }, [stopCloudListeners]);
+  }, [stopCloudListeners, clearAccountState, markRemoteState]);
 
   // Live timer ticks (rest timer, active session timer, set stopwatch, interval runner)
   const activeSession = useMemo(
@@ -1450,11 +2009,28 @@ function MainApp() {
   }, [S.sessions, restMiniLeft, activeSession, lastActiveSessionId, nowTick]);
 
   // Auth Handlers
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (signupName?: string) => {
     setCloudMsg('');
+    const cleaned = cleanName(signupName || '');
+    pendingSignupNameRef.current = cleaned;
+    try {
+      if (cleaned) {
+        localStorage.setItem(PENDING_SIGNUP_NAME_KEY, cleaned);
+      } else {
+        localStorage.removeItem(PENDING_SIGNUP_NAME_KEY);
+      }
+    } catch {
+      // ignore storage errors
+    }
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
+      pendingSignupNameRef.current = '';
+      try {
+        localStorage.removeItem(PENDING_SIGNUP_NAME_KEY);
+      } catch {
+        // ignore
+      }
       const code = (err as { code?: string })?.code || '';
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return;
@@ -1468,11 +2044,64 @@ function MainApp() {
   };
 
   const handleSignOut = async () => {
+    const prevUid = meRef.current?.uid || null;
     try {
+      clearAccountState(true, prevUid);
+      setReady(false);
+      setInvLoaded(false);
+      setRoleState(EMPTY_ROLE);
+      setMyDoc({});
+      setInvIn([]);
+      setInvOut([]);
+      setNotifications([]);
       await signOut(auth);
-      setS((prev) => ({ ...prev, role: '', local: false }));
-      setProfileSheetOpen(false);
-      setCloudSheetOpen(false);
+    } catch (err) {
+      setCloudMsg(friendlyFirestoreError(err));
+    }
+  };
+
+  const handleSaveAthleteName = async (rawName: string) => {
+    const u = meRef.current;
+    const cleaned = cleanName(rawName);
+    if (!u || !u.emailVerified || cleaned.length < 2) return;
+    try {
+      try {
+        await updateProfile(u, { displayName: cleaned });
+      } catch {
+        // non-fatal
+      }
+      await updateDoc(
+        doc(db, 'users', u.uid),
+        stripUndefined({
+          name: cleaned,
+          ath: cleaned.slice(0, 60),
+          ts: Date.now(),
+        })
+      );
+      try {
+        await setDoc(
+          doc(db, 'directory', u.uid),
+          stripUndefined({
+            name: cleaned,
+            email: (u.email || '').toLowerCase(),
+            lastLogin: Date.now(),
+          }),
+          { merge: true }
+        );
+      } catch {
+        // ignore directory error
+      }
+      athleteNameRef.current = cleaned;
+      setS((prev) =>
+        markRemoteState({
+          ...prev,
+          user: cleaned,
+          users: [cleaned],
+          plans: { [cleaned]: prev.plans[prev.user] || prev.plans[cleaned] || [] },
+          sessions: prev.sessions.map((s) => ({ ...s, user: cleaned })),
+        })
+      );
+      showToast('Nombre actualizado');
     } catch (err) {
       setCloudMsg(friendlyFirestoreError(err));
     }
@@ -1509,19 +2138,45 @@ function MainApp() {
     }
   };
 
-  const handleAcceptInvite = async (inviteId: string) => {
+  const handleAcceptInvite = async (inviteId: string, preferredName?: string) => {
     if (!me || !me.emailVerified) return;
     const inv = invIn.find((i) => i.id === inviteId);
     const coachUid = inv?.coachUid || inviteId.split('_')[0];
     const coachName = inv?.coachName || 'Entrenador';
+    const cleanedPref = cleanName(preferredName || '');
+    const canonicalAth =
+      (cleanedPref.length >= 2 ? cleanedPref : '') ||
+      athleteNameRef.current ||
+      resolveAthleteCanonicalName({ user: me, fallbackName: stateRef.current.user });
     try {
+      if (cleanedPref.length >= 2) {
+        try {
+          await updateProfile(me, { displayName: canonicalAth });
+        } catch {
+          // non-fatal
+        }
+      }
       // Must update users/{uid} BEFORE deleting invite because firestore.rules inviteOk() verifies invite existence
-      await updateDoc(doc(db, 'users', me.uid), {
-        coaches: arrayUnion(coachUid),
-        cn: { ...(myDoc.cn || {}), [coachUid]: coachName },
-        ts: Date.now(),
-      });
+      await updateDoc(
+        doc(db, 'users', me.uid),
+        stripUndefined({
+          coaches: arrayUnion(coachUid),
+          cn: { ...(myDoc.cn || {}), [coachUid]: coachName },
+          name: canonicalAth,
+          ath: canonicalAth.slice(0, 60),
+          ts: Date.now(),
+        })
+      );
       await deleteDoc(doc(db, 'invites', inviteId));
+      athleteNameRef.current = canonicalAth;
+      setS((prev) =>
+        markRemoteState({
+          ...prev,
+          user: canonicalAth,
+          users: [canonicalAth],
+          plans: { [canonicalAth]: prev.plans[prev.user] || prev.plans[canonicalAth] || [] },
+        })
+      );
       setMyDoc((prev) => ({
         coaches: Array.from(new Set([...(prev.coaches || []), coachUid])),
         cn: { ...(prev.cn || {}), [coachUid]: coachName },
@@ -1630,8 +2285,7 @@ function MainApp() {
           sessions: cur.sessions.filter((s) => s.user !== name),
           plans: { ...cur.plans, [name]: [] },
         };
-        skipPushCountRef.current += 1;
-        setS(nextState);
+        setS(markRemoteState(nextState));
         await deleteUnusedStorageUrls(candidateUrls, collectStorageUrlsFromState(nextState));
         playActionCue('delete');
         showToast('Sesiones y plan del atleta eliminados en Firebase');
@@ -1728,8 +2382,7 @@ function MainApp() {
           })
         );
 
-        skipPushCountRef.current += 1;
-        setS({ ...nextState, mts: nowTs });
+        setS(markRemoteState({ ...nextState, mts: nowTs }));
         await deleteUnusedStorageUrls(candidateUrls, collectStorageUrlsFromState(nextState));
         playActionCue('delete');
         showToast('Atleta y datos eliminados de Firebase');
@@ -2134,8 +2787,9 @@ function MainApp() {
     unlockAudio();
     const now = Date.now();
 
-    // Rest actions
-    if (action === 'x') {
+    // Rest actions (only rest time supports ±15s, ±1m, and reset to 0:00)
+    if (action === 'x' || action === 'rz') {
+      lastRestTickSecRef.current = -1;
       setRestTimer(null);
       return;
     }
@@ -2178,32 +2832,60 @@ function MainApp() {
       });
       return;
     }
-    if (action === '+' || action === '-') {
-      const delta = action === '+' ? 15 : -15;
+    if (action === '+' || action === '-' || action === 'r+60' || action === 'r-60') {
+      const delta =
+        action === '+' ? 15 : action === '-' ? -15 : action === 'r+60' ? 60 : -60;
       setRestTimer((prev) => {
-        if (!prev) return delta > 0 ? { end: now + 15000, tot: 15, base: 15, done: false, paused: false, left: 15 } : null;
-        if (prev.paused) {
-          const nextLeft = Math.max(0, prev.left + delta);
-          return { ...prev, left: nextLeft, tot: Math.max(prev.tot, nextLeft) };
+        if (!prev) {
+          if (delta <= 0) return null;
+          playTimerStart();
+          return {
+            end: now + delta * 1000,
+            tot: delta,
+            base: delta,
+            done: false,
+            paused: false,
+            left: delta,
+          };
         }
-        const rem = Math.max(0, Math.ceil((prev.end - now) / 1000) + delta);
+        const curRem = prev.done
+          ? 0
+          : prev.paused
+          ? Math.max(0, prev.left)
+          : Math.max(0, Math.ceil((prev.end - now) / 1000));
+        const nextRem = Math.max(0, curRem + delta);
+        if (nextRem === 0) {
+          lastRestTickSecRef.current = -1;
+          return null;
+        }
+        if (prev.done) {
+          playTimerStart();
+        }
+        if (prev.paused) {
+          return {
+            ...prev,
+            done: false,
+            doneAt: undefined,
+            left: nextRem,
+            tot: Math.max(prev.tot, nextRem),
+          };
+        }
         return {
           ...prev,
-          done: rem === 0,
-          doneAt: rem === 0 ? now : undefined,
-          end: now + rem * 1000,
-          tot: Math.max(prev.tot, rem),
-          left: rem,
+          done: false,
+          doneAt: undefined,
+          end: now + nextRem * 1000,
+          tot: Math.max(prev.tot, nextRem),
+          left: nextRem,
         };
       });
       return;
     }
 
-    // Session stopwatch actions
+    // Session stopwatch actions (start / pause only; cannot reset to 0 or shift minutes)
     if (!activeSessionId) return;
     if (action === 'go' && !activeSession?.tm?.st) playTimerStart();
     if (action === 'pa' && activeSession?.tm?.st) playTimerPause();
-    if (action === 'sr') playTimerStart();
 
     handleUpdateActiveSession((cur) => {
       const tm = cur.tm || { st: 0, acc: 0 };
@@ -2217,18 +2899,6 @@ function MainApp() {
           ...cur,
           tm: { ...tm, acc: (tm.acc || 0) + (now - tm.st) / 1000, st: 0 },
         };
-      }
-      if (action === 'sr') {
-        return { ...cur, tm: { st: now, acc: 0 } };
-      }
-      if (action === 'sz') {
-        return { ...cur, tm: { st: 0, acc: 0 } };
-      }
-      if (action === 'sp' || action === 'sm') {
-        const delta = action === 'sp' ? 60 : -60;
-        const curAcc = (tm.acc || 0) + (tm.st ? (now - tm.st) / 1000 : 0);
-        const nextAcc = Math.max(0, curAcc + delta);
-        return { ...cur, tm: { ...tm, acc: nextAcc, st: tm.st ? now : 0 } };
       }
       return cur;
     });
@@ -2480,8 +3150,10 @@ function MainApp() {
         <InviteGateView
           me={me}
           loading={isCheckingGate}
+          currentName={S.user || athleteNameRef.current}
           invIn={invIn}
           errorMsg={cloudMsg}
+          onSaveName={handleSaveAthleteName}
           onAcceptInvite={handleAcceptInvite}
           onDeleteInvite={handleDeleteInvite}
           onSignOut={handleSignOut}
@@ -2501,7 +3173,6 @@ function MainApp() {
           haptic('light');
           updateState((prev) => ({ ...prev, view }));
         }}
-        onOpenNotifications={() => setNotificationsSheetOpen(true)}
         onOpenProfileSheet={() => setProfileSheetOpen(true)}
         onResumeActiveSession={(id) => setActiveSessionId(id)}
       >
@@ -2683,6 +3354,7 @@ function MainApp() {
           roleState={roleState}
           myDoc={myDoc}
           pendingInvitesCount={invIn.length}
+          unreadNotifCount={unreadNotifCount}
           notifPermission={notifPermission}
           onRequestNotificationPermission={() => {
             void handleRequestNotifPermission();
@@ -2772,14 +3444,14 @@ function MainApp() {
         roleState={roleState}
         myDoc={myDoc}
         pendingInvitesCount={invIn.length}
+        unreadNotifCount={unreadNotifCount}
+        notifPermission={notifPermission}
         onNavigate={(view) => updateState((prev) => ({ ...prev, view }))}
-        onToggleTheme={() =>
-          updateState((prev) => ({
-            ...prev,
-            theme: prev.theme === 'light' ? 'dark' : 'light',
-          }))
-        }
-        onToggleSound={handleToggleSound}
+        onUpdateState={updateState}
+        onOpenNotifications={() => setNotificationsSheetOpen(true)}
+        onRequestNotificationPermission={() => {
+          void handleRequestNotifPermission();
+        }}
         onOpenCloud={() => setCloudSheetOpen(true)}
         onGoogleLogin={handleGoogleLogin}
         onSignOut={handleSignOut}

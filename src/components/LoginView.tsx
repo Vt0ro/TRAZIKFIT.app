@@ -1,17 +1,32 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { Check, ChevronRight, Cloud, Copy, MailCheck, ShieldAlert } from 'lucide-react';
+import {
+  Check,
+  ChevronRight,
+  Cloud,
+  Copy,
+  LogIn,
+  MailCheck,
+  ShieldAlert,
+  UserPlus,
+} from 'lucide-react';
 import { haptic } from '../lib/audioHaptics';
+import { cleanName } from '../lib/metrics';
 import { BrandMark, BrandSlogan, BrandWordmark } from './BrandMark';
 import { PWAInstallButton } from './PWABanners';
 
 interface LoginViewProps {
-  onGoogleLogin: () => void;
+  onGoogleLogin: (signupName?: string) => void;
   errorMsg?: string;
 }
 
 export function LoginView({ onGoogleLogin, errorMsg }: LoginViewProps) {
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [athleteName, setAthleteName] = useState('');
+  const [nameError, setNameError] = useState('');
   const [copiedHost, setCopiedHost] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+
   const currentHost =
     typeof window !== 'undefined' && window.location?.hostname ? window.location.hostname : '';
   const isDomainError =
@@ -28,6 +43,19 @@ export function LoginView({ onGoogleLogin, errorMsg }: LoginViewProps) {
     } catch {
       // ignore if clipboard blocked by iframe permissions
     }
+  };
+
+  const handleCreateAccount = () => {
+    const cleaned = cleanName(athleteName);
+    if (cleaned.length < 2) {
+      haptic('medium');
+      setNameError('Ingresa tu nombre (mínimo 2 caracteres) para crear tu cuenta.');
+      nameInputRef.current?.focus();
+      return;
+    }
+    setNameError('');
+    haptic('light');
+    onGoogleLogin(cleaned);
   };
 
   return (
@@ -47,31 +75,127 @@ export function LoginView({ onGoogleLogin, errorMsg }: LoginViewProps) {
           </h1>
           <BrandSlogan className="text-[10.5px] tracking-[0.18em]" />
           <p className="text-sm text-[var(--mut)] pt-1">
-            Inicia sesión con tu cuenta de Google para acceder a tu entrenamiento.
+            {mode === 'login'
+              ? 'Inicia sesión con tu cuenta de Google para acceder a tu entrenamiento.'
+              : 'Crea tu perfil con tu nombre y vincúlalo con Google para recibir tu planificación en blanco.'}
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            haptic('light');
-            onGoogleLogin();
-          }}
-          className="tf-tap w-full flex items-center gap-4 p-4 rounded-[22px] text-left text-white border border-[#E0C8FF]/35 bg-gradient-to-br from-[#A259FF] via-[#6D28D9] to-[#321C6A] shadow-lg shadow-[#A259FF]/30 hover:brightness-110 cursor-pointer"
-        >
-          <span className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
-            <Cloud className="w-6 h-6" />
-          </span>
-          <span className="flex-1 min-w-0">
-            <span className="block font-semibold text-base leading-tight">
-              Continuar con Google
+        {/* Mode Switcher: Iniciar sesión / Crear cuenta */}
+        <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl border border-[var(--line)] bg-[var(--surface)]">
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light');
+              setMode('login');
+              setNameError('');
+            }}
+            className={`min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              mode === 'login'
+                ? 'bg-[var(--ac)] text-white shadow-sm'
+                : 'text-[var(--mut)] hover:text-[var(--tx)]'
+            }`}
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Iniciar sesión</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light');
+              setMode('signup');
+              setNameError('');
+            }}
+            className={`min-h-[40px] rounded-xl text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition cursor-pointer ${
+              mode === 'signup'
+                ? 'bg-[var(--ac)] text-white shadow-sm'
+                : 'text-[var(--mut)] hover:text-[var(--tx)]'
+            }`}
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Crear cuenta</span>
+          </button>
+        </div>
+
+        {mode === 'login' ? (
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light');
+              onGoogleLogin();
+            }}
+            className="tf-tap w-full flex items-center gap-4 p-4 rounded-[22px] text-left text-white border border-[#E0C8FF]/35 bg-gradient-to-br from-[#A259FF] via-[#6D28D9] to-[#321C6A] shadow-lg shadow-[#A259FF]/30 hover:brightness-110 cursor-pointer"
+          >
+            <span className="w-11 h-11 rounded-2xl bg-white/15 flex items-center justify-center shrink-0">
+              <Cloud className="w-6 h-6" />
             </span>
-            <span className="block text-xs text-white/80 mt-0.5">
-              Acceso verificado y sincronizado en la nube
+            <span className="flex-1 min-w-0">
+              <span className="block font-semibold text-base leading-tight">
+                Continuar con Google
+              </span>
+              <span className="block text-xs text-white/80 mt-0.5">
+                Acceso verificado y sincronizado en la nube
+              </span>
             </span>
-          </span>
-          <ChevronRight className="w-5 h-5 text-white/80 shrink-0" />
-        </button>
+            <ChevronRight className="w-5 h-5 text-white/80 shrink-0" />
+          </button>
+        ) : (
+          <div className="tf-card p-4 sm:p-5 space-y-3.5">
+            <div className="space-y-1.5">
+              <label
+                htmlFor="tf-signup-name"
+                className="block text-xs font-semibold text-[var(--tx)]"
+              >
+                Nombre del atleta
+              </label>
+              <input
+                ref={nameInputRef}
+                id="tf-signup-name"
+                type="text"
+                maxLength={40}
+                autoComplete="name"
+                placeholder="Ej. Paz, Felipe, Daniel…"
+                value={athleteName}
+                onChange={(e) => {
+                  setAthleteName(e.target.value);
+                  if (nameError) setNameError('');
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreateAccount();
+                }}
+                className="tf-input w-full px-3.5 py-2.5 text-base"
+              />
+              {nameError && (
+                <p className="text-xs text-[var(--danger)]">{nameError}</p>
+              )}
+              <p className="text-[11.5px] text-[var(--mut)] leading-relaxed pt-0.5">
+                Este nombre quedará guardado en tu cuenta para conectarte con tu entrenador y
+                mantener todos tus datos vacíos hasta que él suba tu planificación.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCreateAccount}
+              className="tf-tap w-full flex items-center gap-3.5 p-3.5 rounded-[18px] text-left text-white border border-[#E0C8FF]/35 bg-gradient-to-br from-[#A259FF] via-[#6D28D9] to-[#321C6A] shadow-lg shadow-[#A259FF]/30 hover:brightness-110 cursor-pointer"
+            >
+              <span className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                <UserPlus className="w-5 h-5" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block font-semibold text-sm leading-tight">
+                  Crear cuenta con Google
+                </span>
+                <span className="block text-[11px] text-white/80 mt-0.5 truncate">
+                  {cleanName(athleteName)
+                    ? `Perfil: ${cleanName(athleteName)}`
+                    : 'Escribe tu nombre para continuar'}
+                </span>
+              </span>
+              <ChevronRight className="w-5 h-5 text-white/80 shrink-0" />
+            </button>
+          </div>
+        )}
 
         {errorMsg && !errorMsg.startsWith('✓') && (
           <div className="space-y-3">
