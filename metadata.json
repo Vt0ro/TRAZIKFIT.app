@@ -1,0 +1,6 @@
+{
+  "name": "Trazik Fit",
+  "description": "Plataforma de planificación, seguimiento y rendimiento para entrenadores deportivos y atletas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

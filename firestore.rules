@@ -1,0 +1,276 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------- Global Primitives ----------
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // ---------- Owner & Role Helpers ----------
+    function isOwnerEmail() {
+      return isVerified() && myEmail() in ['vicentetorojeldres@gmail.com', 'torowkozbeats@gmail.com'];
+    }
+    function ownerPinned() {
+      return exists(/databases/$(database)/documents/config/owner);
+    }
+    function pinnedOwnerUid() {
+      return get(/databases/$(database)/documents/config/owner).data.uid;
+    }
+    function isOwner() {
+      return isVerified() && (
+        (ownerPinned() && pinnedOwnerUid() == request.auth.uid) ||
+        isOwnerEmail()
+      );
+    }
+    function isOwnerUid(u) {
+      return (ownerPinned() && pinnedOwnerUid() == u) || (isOwner() && request.auth.uid == u);
+    }
+    function hasRole(u) {
+      return exists(/databases/$(database)/documents/roles/$(u));
+    }
+    function roleOf(u) {
+      return get(/databases/$(database)/documents/roles/$(u)).data;
+    }
+    function isAdmin() {
+      return isOwner() || (isVerified() && hasRole(request.auth.uid)
+        && roleOf(request.auth.uid).get('admin', false) == true);
+    }
+    function isTrainer() {
+      return isOwner() || (isVerified() && hasRole(request.auth.uid)
+        && roleOf(request.auth.uid).get('role', 'athlete') == 'trainer');
+    }
+    function isTrainerUid(u) {
+      return (ownerPinned() && pinnedOwnerUid() == u)
+        || (hasRole(u) && roleOf(u).get('role', 'athlete') == 'trainer');
+    }
+
+    // ---------- Coach-Athlete Link Helpers ----------
+    function linked(u) {
+      return exists(/databases/$(database)/documents/users/$(u))
+        && request.auth.uid in get(/databases/$(database)/documents/users/$(u)).data.coaches;
+    }
+    function inviteOk(c) {
+      return isVerified()
+        && isValidId(c)
+        && exists(/databases/$(database)/documents/invites/$(c + '_' + myEmail()))
+        && get(/databases/$(database)/documents/invites/$(c + '_' + myEmail())).data.coachUid == c
+        && get(/databases/$(database)/documents/invites/$(c + '_' + myEmail())).data.to == myEmail()
+        && isTrainerUid(c);
+    }
+    function coachesOk() {
+      let nc = incoming().coaches;
+      let oc = existing().coaches;
+      let added = nc.toSet().difference(oc.toSet());
+      return nc is list && nc.size() <= 10 && (
+        added.size() == 0
+        || (added.size() == 1 && nc.size() > 0
+            && added.hasAny([nc[nc.size() - 1]].toSet())
+            && inviteOk(nc[nc.size() - 1]))
+      );
+    }
+
+    // ---------- Validation Blueprints ----------
+    function isValidUserData(d) {
+      return d.keys().hasAll(['coaches', 'cn', 'name', 'email', 'ath', 'ts'])
+        && d.keys().hasOnly(['coaches', 'cn', 'name', 'email', 'ath', 'ts', 'meta', 'cplans', 'cts'])
+        && d.coaches is list && d.coaches.size() <= 10
+        && (d.coaches.size() == 0 || d.coaches[0] is string)
+        && d.cn is map
+        && d.name is string && d.name.size() <= 100
+        && d.email is string && d.email.size() <= 200
+        && d.ath is string && d.ath.size() <= 60
+        && d.ts is number
+        && (!('meta' in d) || d.meta is map)
+        && (!('cplans' in d) || d.cplans is map)
+        && (!('cts' in d) || d.cts is number);
+    }
+
+    function isValidSession(d, sid) {
+      return d.keys().hasAll(['id', 'user', 'date', 'sport', 'exercises', 'ts'])
+        && d.keys().hasOnly(['id', 'user', 'date', 'sport', 'name', 'mid', 'exercises', 'rpe', 'feel', 'notes', 'tm', 'bw', 'ts'])
+        && d.id is string && d.id == sid && d.id.size() <= 128
+        && d.user is string && d.user.size() <= 60
+        && d.date is string && d.date.size() == 10 && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && d.sport is string && d.sport.size() <= 40
+        && d.exercises is list && d.exercises.size() <= 80
+        && (d.exercises.size() == 0 || d.exercises[0] is map)
+        && d.ts is number
+        && (!('name' in d) || (d.name is string && d.name.size() <= 140))
+        && (!('mid' in d) || (d.mid is string && d.mid.size() <= 64))
+        && (!('rpe' in d) || (d.rpe is number && d.rpe >= 0 && d.rpe <= 10))
+        && (!('feel' in d) || (d.feel is number && d.feel >= 0 && d.feel <= 5))
+        && (!('notes' in d) || (d.notes is string && d.notes.size() <= 2000))
+        && (!('tm' in d) || d.tm is map)
+        && (!('bw' in d) || (d.bw is number && d.bw >= 0 && d.bw <= 500));
+    }
+
+    function isValidInvite(d, id) {
+      return d.keys().hasAll(['to', 'coachUid', 'coachName', 'ts'])
+        && d.keys().hasOnly(['to', 'coachUid', 'coachName', 'ts'])
+        && d.coachUid == request.auth.uid
+        && d.to is string && d.to.size() >= 3 && d.to.size() <= 200
+        && d.to == d.to.lower()
+        && d.coachName is string && d.coachName.size() <= 120
+        && d.ts is number
+        && id == request.auth.uid + '_' + d.to;
+    }
+
+    function isValidRole(d, u) {
+      return d.keys().hasAll(['role', 'admin', 'updatedAt', 'updatedBy'])
+        && d.keys().hasOnly(['role', 'admin', 'subscription', 'updatedAt', 'updatedBy'])
+        && d.role in ['trainer', 'athlete']
+        && d.admin is bool
+        && (d.admin == false || d.role == 'trainer')
+        && d.updatedAt is number
+        && d.updatedBy == request.auth.uid
+        && (!('subscription' in d)
+            || (d.subscription is map
+                && d.subscription.get('status', 'none') in ['none', 'trial', 'active', 'past_due', 'canceled']))
+        && (!isOwnerUid(u) || (d.role == 'trainer' && d.admin == true));
+    }
+
+    function isValidDirectory(d) {
+      return d.keys().hasAll(['name', 'email', 'lastLogin'])
+        && d.keys().hasOnly(['name', 'email', 'createdAt', 'lastLogin'])
+        && d.email is string && d.email.size() <= 200 && d.email == myEmail()
+        && d.name is string && d.name.size() <= 80
+        && d.lastLogin is number
+        && (!('createdAt' in d) || d.createdAt is number);
+    }
+
+    // ---------- Users & Sessions ----------
+    match /users/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (
+        request.auth.uid == uid
+        || (isTrainer() && request.auth.uid in existing().coaches)
+        || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        request.auth.uid == uid
+        || (isTrainer() && request.auth.uid in existing().coaches)
+        || isAdmin()
+      );
+
+      allow create: if isVerified() && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUserData(incoming())
+        && incoming().coaches.size() == 0;
+
+      allow update: if isVerified() && isValidId(uid) && isValidUserData(incoming()) && (
+        (request.auth.uid == uid && coachesOk()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['coaches', 'cn', 'name', 'email', 'ath', 'ts', 'meta']))
+        || (isTrainer() && request.auth.uid in existing().coaches
+            && incoming().diff(existing()).affectedKeys().hasOnly(['cplans', 'cts']))
+      );
+
+      match /sessions/{sid} {
+        allow get: if isSignedIn() && isValidId(uid) && isValidId(sid) && (
+          request.auth.uid == uid
+          || (isTrainer() && linked(uid))
+          || isAdmin()
+        );
+        allow list: if isSignedIn() && (
+          request.auth.uid == uid
+          || (isTrainer() && linked(uid))
+          || isAdmin()
+        );
+        allow create: if isVerified() && isValidId(uid) && isValidId(sid)
+          && isValidSession(incoming(), sid) && (
+            request.auth.uid == uid
+            || (isTrainer() && linked(uid))
+          );
+        allow update: if isVerified() && isValidId(uid) && isValidId(sid)
+          && isValidSession(incoming(), sid) && (
+            request.auth.uid == uid
+            || (isTrainer() && linked(uid))
+          );
+        allow delete: if isVerified() && isValidId(uid) && isValidId(sid) && (
+          request.auth.uid == uid
+          || (isTrainer() && linked(uid))
+        );
+      }
+    }
+
+    // ---------- Invites ----------
+    match /invites/{id} {
+      allow create: if isVerified() && isTrainer()
+        && id is string && id.size() <= 330
+        && isValidInvite(incoming(), id);
+      allow get: if isSignedIn() && id is string && id.size() <= 330 && (
+        (isVerified() && existing().to == myEmail())
+        || existing().coachUid == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        (isVerified() && existing().to == myEmail())
+        || existing().coachUid == request.auth.uid
+      );
+      allow delete: if isSignedIn() && id is string && id.size() <= 330 && (
+        (isVerified() && existing().to == myEmail())
+        || existing().coachUid == request.auth.uid
+      );
+    }
+
+    // ---------- Roles ----------
+    match /roles/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(uid) && isValidRole(incoming(), uid);
+      allow delete: if isAdmin() && isValidId(uid) && !isOwnerUid(uid);
+    }
+
+    // ---------- Directory ----------
+    match /directory/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isVerified() && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidDirectory(incoming());
+    }
+
+    // ---------- Role Audit ----------
+    match /roleAudit/{id} {
+      allow create: if isAdmin() && isValidId(id)
+        && incoming().keys().hasAll(['uid', 'from', 'to', 'by', 'at'])
+        && incoming().keys().hasOnly(['uid', 'email', 'from', 'to', 'by', 'at'])
+        && incoming().uid is string && incoming().uid.size() <= 128
+        && incoming().by == request.auth.uid
+        && incoming().at is number
+        && incoming().from is map && incoming().to is map;
+      allow get, list: if isAdmin();
+    }
+
+    // ---------- Owner Singleton ----------
+    match /config/owner {
+      allow get: if isAdmin();
+      allow create: if isVerified() && !ownerPinned()
+        && isOwnerEmail()
+        && incoming().keys().hasAll(['uid', 'email', 'pinnedAt'])
+        && incoming().keys().hasOnly(['uid', 'email', 'pinnedAt'])
+        && incoming().uid == request.auth.uid
+        && incoming().email == myEmail()
+        && incoming().pinnedAt is number;
+    }
+  }
+}

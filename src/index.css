@@ -1,0 +1,307 @@
+@import "tailwindcss";
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  color-scheme: dark;
+  --bg: #0A051A;
+  --surface: #130B2D;
+  --surface-2: #1E1144;
+  --surface-3: #321C6A;
+  --line: rgba(162, 89, 255, 0.22);
+  --line-strong: rgba(224, 200, 255, 0.36);
+  --tx: #F7F3FF;
+  --mut: #CFC8DD;
+  --ac: #A259FF;
+  --ac-deep: #6D28D9;
+  --ac2: #E0C8FF;
+  --silver: #CFC8DD;
+  --deep-violet: #321C6A;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #fb7185;
+  --cyan: #38bdf8;
+  --ease-ios: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-m3: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F6F2FC;
+  --surface: #FFFFFF;
+  --surface-2: #EDE4FA;
+  --surface-3: #E0C8FF;
+  --line: rgba(50, 28, 106, 0.14);
+  --line-strong: rgba(109, 40, 217, 0.3);
+  --tx: #0A051A;
+  --mut: #4E4270;
+  --ac: #6D28D9;
+  --ac-deep: #321C6A;
+  --ac2: #6D28D9;
+  --silver: #CFC8DD;
+  --deep-violet: #321C6A;
+  --ok: #059669;
+  --warn: #d97706;
+  --danger: #e11d48;
+  --cyan: #0284c7;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  background-color: var(--bg);
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: contain;
+  overflow-x: clip;
+  touch-action: manipulation;
+  transition: background-color 0.22s ease;
+}
+
+html::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(115% 55% at 14% -8%, rgba(50, 28, 106, 0.72), transparent 60%),
+    radial-gradient(85% 44% at 96% 2%, rgba(162, 89, 255, 0.16), transparent 58%);
+}
+
+html[data-theme="light"]::before {
+  background:
+    radial-gradient(115% 48% at 10% -12%, rgba(162, 89, 255, 0.16), transparent 58%),
+    radial-gradient(85% 40% at 100% 0%, rgba(109, 40, 217, 0.1), transparent 56%);
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--tx);
+  font-family: "Poppins", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-overflow-scrolling: touch;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.font-display {
+  font-family: "Poppins", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  text-wrap: balance;
+}
+
+.tf-wordmark {
+  font-family: "Poppins", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(115deg, #E0C8FF 0%, #A259FF 55%, #6D28D9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+html[data-theme="light"] .tf-wordmark {
+  background: linear-gradient(115deg, #321C6A 0%, #6D28D9 55%, #A259FF 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tf-slogan {
+  font-family: "Poppins", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono-num {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Text selection discipline: interactive controls unselectable, content/inputs cleanly selectable */
+button, nav, header {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea, select, [data-selectable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+::selection {
+  background: rgba(162, 89, 255, 0.35);
+  color: inherit;
+}
+
+input, textarea {
+  caret-color: var(--ac2);
+}
+
+/* Accessible focus rings */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--ac2);
+  outline-offset: 2px;
+}
+
+/* Native platform curves & crisp single-elevation surfaces */
+.tf-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  transition: transform 0.18s var(--ease-out-expo), border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+html[data-theme="dark"] .tf-card {
+  background: linear-gradient(165deg, rgba(50, 28, 106, 0.42), rgba(10, 5, 26, 0.94));
+  box-shadow: 0 12px 30px -18px rgba(109, 40, 217, 0.52), inset 0 1px 0 rgba(224, 200, 255, 0.08);
+}
+
+html[data-theme="light"] .tf-card {
+  box-shadow: 0 6px 22px -14px rgba(50, 28, 106, 0.16), 0 1px 2px rgba(10, 5, 26, 0.04);
+}
+
+html[data-os="ios"] .tf-card {
+  border-radius: 22px;
+}
+
+html[data-os="android"] .tf-card {
+  border-radius: 18px;
+}
+
+/* Tactile micro-feedback utility for clickable surfaces & chips */
+.tf-tap {
+  transition: transform 0.14s var(--ease-out-expo), border-color 0.16s ease, background-color 0.16s ease, filter 0.16s ease;
+}
+
+.tf-tap:active {
+  transform: scale(0.97);
+}
+
+.tf-input {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--tx);
+  border-radius: 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.tf-input:focus {
+  outline: none;
+  border-color: var(--ac);
+  box-shadow: 0 0 0 3px rgba(162, 89, 255, 0.24);
+}
+
+.tf-btn-pri {
+  background: linear-gradient(135deg, #A259FF 0%, #6D28D9 100%);
+  color: #ffffff;
+  border: 1px solid rgba(224, 200, 255, 0.22);
+  box-shadow: 0 10px 24px -10px rgba(162, 89, 255, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform 0.14s var(--ease-out-expo), filter 0.16s ease, box-shadow 0.16s ease;
+}
+
+.tf-btn-pri:hover {
+  filter: brightness(1.07);
+}
+
+.tf-btn-pri:active {
+  transform: scale(0.965);
+  filter: brightness(0.96);
+}
+
+/* Clean custom range input for sound volume */
+input[type="range"].tf-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  cursor: pointer;
+}
+
+input[type="range"].tf-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--ac2);
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s ease;
+}
+
+input[type="range"].tf-range::-webkit-slider-thumb:active {
+  transform: scale(1.15);
+}
+
+/* Hide all visual scrollbars globally for native Play Store / mobile app feel */
+html,
+body,
+*,
+*::before,
+*::after {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Compositor-only animations */
+@keyframes restFlash {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(183, 140, 255, 0.26); }
+}
+
+@keyframes checkPop {
+  0% { transform: scale(0.84); }
+  55% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.animate-rest-flash {
+  animation: restFlash 0.55s ease-in-out 4;
+}
+
+.animate-check-pop {
+  animation: checkPop 0.24s var(--ease-out-expo) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rest-flash,
+  .animate-check-pop {
+    animation-duration: 0.01ms !important;
+  }
+  .tf-card,
+  .tf-tap,
+  .tf-btn-pri {
+    transition-duration: 0.01ms !important;
+  }
+}

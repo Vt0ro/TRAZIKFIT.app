@@ -1,0 +1,260 @@
+{
+  "entities": {
+    "OwnerConfig": {
+      "title": "OwnerConfig",
+      "description": "Pinned owner identity document set once on first verified owner login.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "pinnedAt": {
+          "type": "number"
+        }
+      },
+      "required": ["uid", "email", "pinnedAt"]
+    },
+    "UserRole": {
+      "title": "UserRole",
+      "description": "Server-authoritative role and subscription structure for a user.",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["trainer", "athlete"]
+        },
+        "admin": {
+          "type": "boolean"
+        },
+        "subscription": {
+          "type": "object"
+        },
+        "updatedAt": {
+          "type": "number"
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        }
+      },
+      "required": ["role", "admin", "updatedAt", "updatedBy"]
+    },
+    "DirectoryEntry": {
+      "title": "DirectoryEntry",
+      "description": "Minimal user directory record for admin management without training or role data.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "number"
+        },
+        "lastLogin": {
+          "type": "number"
+        }
+      },
+      "required": ["name", "email", "lastLogin"]
+    },
+    "RoleAudit": {
+      "title": "RoleAudit",
+      "description": "Append-only audit log for role and subscription updates by admins.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "from": {
+          "type": "object"
+        },
+        "to": {
+          "type": "object"
+        },
+        "by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "at": {
+          "type": "number"
+        }
+      },
+      "required": ["uid", "from", "to", "by", "at"]
+    },
+    "UserData": {
+      "title": "UserData",
+      "description": "User training profile, linked coaches, training plans, PRs, and bodyweight history.",
+      "type": "object",
+      "properties": {
+        "coaches": {
+          "type": "array"
+        },
+        "cn": {
+          "type": "object"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "ath": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "ts": {
+          "type": "number"
+        },
+        "meta": {
+          "type": "object"
+        },
+        "cplans": {
+          "type": "object"
+        },
+        "cts": {
+          "type": "number"
+        }
+      },
+      "required": ["coaches", "cn", "name", "email", "ath", "ts"]
+    },
+    "TrainingSession": {
+      "title": "TrainingSession",
+      "description": "Individual training session document under a user.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "maxLength": 10
+        },
+        "sport": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "mid": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "exercises": {
+          "type": "array"
+        },
+        "rpe": {
+          "type": "number"
+        },
+        "feel": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "tm": {
+          "type": "object"
+        },
+        "bw": {
+          "type": "number"
+        },
+        "ts": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "user", "date", "sport", "exercises", "ts"]
+    },
+    "CoachInvite": {
+      "title": "CoachInvite",
+      "description": "Invitation sent by a verified trainer to an athlete email.",
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 200
+        },
+        "coachUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "coachName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "ts": {
+          "type": "number"
+        }
+      },
+      "required": ["to", "coachUid", "coachName", "ts"]
+    }
+  },
+  "firestore": {
+    "/config/owner": {
+      "schema": { "$ref": "#/entities/OwnerConfig" },
+      "description": "Singleton pinned owner identity."
+    },
+    "/roles/{uid}": {
+      "schema": { "$ref": "#/entities/UserRole" },
+      "description": "Server-validated user roles and subscription metadata."
+    },
+    "/directory/{uid}": {
+      "schema": { "$ref": "#/entities/DirectoryEntry" },
+      "description": "Minimal user directory for admin management."
+    },
+    "/roleAudit/{auditId}": {
+      "schema": { "$ref": "#/entities/RoleAudit" },
+      "description": "Append-only audit trail for role changes."
+    },
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserData" },
+      "description": "User training metadata, coaches, and trainer-assigned plans."
+    },
+    "/users/{uid}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/TrainingSession" },
+      "description": "Individual workout session logs belonging to a user."
+    },
+    "/invites/{inviteId}": {
+      "schema": { "$ref": "#/entities/CoachInvite" },
+      "description": "Pending trainer-to-athlete link invitations."
+    }
+  }
+}
