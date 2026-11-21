@@ -35,8 +35,8 @@ export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-// Cuenta propietaria original definida en las reglas de trazikfit-5fafa
-export const OWNER_EMAILS = ['vicentetorojeldres@gmail.com'];
+// Cuentas propietarias definidas en firestore.rules de trazikfit-5fafa
+export const OWNER_EMAILS = ['vicentetorojeldres@gmail.com', 'torowkozbeats@gmail.com'];
 
 export enum OperationType {
   CREATE = 'create',

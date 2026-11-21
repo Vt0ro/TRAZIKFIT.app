@@ -9,7 +9,6 @@ import {
   type User,
 } from 'firebase/auth';
 import {
-  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -113,12 +112,16 @@ import type {
   ActiveView,
   AppNotification,
   AppState,
+  Block,
+  BlockConfig,
   CircuitIntervalTarget,
+  DayPlan,
   IntervalMode,
   InviteItem,
   MetricKey,
   MonthPlan,
   NotifPermissionState,
+  PlanExercise,
   RestTimerState,
   SetStopwatchState,
   SoundSettings,
@@ -150,17 +153,161 @@ function loadSavedRestTimer(): RestTimerState | null {
   }
 }
 
-function safeDocDataToMeta(raw: unknown): Record<string, unknown> | null {
+function encodeBlockForFirestore(b: Block): Record<string, unknown> {
+  const ex = Array.isArray(b?.[1]) ? b[1] : [];
+  const cfg = b?.[2];
+  return stripUndefined({
+    t: String(b?.[0] || ''),
+    ex,
+    ...(cfg ? { c: cfg } : {}),
+  });
+}
+
+function decodeBlockFromFirestore(raw: unknown): Block {
+  if (Array.isArray(raw)) {
+    return [
+      String(raw[0] || ''),
+      Array.isArray(raw[1]) ? (raw[1] as PlanExercise[]) : [],
+      raw[2] as BlockConfig | undefined,
+    ];
+  }
+  if (raw && typeof raw === 'object') {
+    const o = raw as { t?: unknown; title?: unknown; ex?: unknown; c?: unknown; cfg?: unknown };
+    const ex = Array.isArray(o.ex) ? (o.ex as PlanExercise[]) : [];
+    const cfg = (o.c ?? o.cfg) as BlockConfig | undefined;
+    return cfg !== undefined
+      ? [String(o.t ?? o.title ?? ''), ex, cfg]
+      : [String(o.t ?? o.title ?? ''), ex];
+  }
+  return ['', []];
+}
+
+function encodeMonthListForFirestore(list: MonthPlan[]): Array<Record<string, unknown>> {
+  return (Array.isArray(list) ? list : []).map((m) =>
+    stripUndefined({
+      ...m,
+      d: (Array.isArray(m?.d) ? m.d : []).map((day: DayPlan) =>
+        stripUndefined({
+          ...day,
+          b: (Array.isArray(day?.b) ? day.b : []).map(encodeBlockForFirestore),
+        })
+      ),
+    })
+  );
+}
+
+function decodeMonthListFromFirestore(raw: unknown): MonthPlan[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((m): m is Record<string, unknown> => Boolean(m && typeof m === 'object'))
+    .map((m) => ({
+      id: String(m.id || uid()),
+      n: String(m.n || ''),
+      f: String(m.f || ''),
+      d: (Array.isArray(m.d) ? m.d : []).map((dayRaw) => {
+        const day = (dayRaw && typeof dayRaw === 'object' ? dayRaw : {}) as Record<
+          string,
+          unknown
+        >;
+        return {
+          n: String(day.n || ''),
+          wd: Number(day.wd || 0),
+          t: String(day.t || ''),
+          note: String(day.note || ''),
+          b: (Array.isArray(day.b) ? day.b : []).map(decodeBlockFromFirestore),
+        };
+      }),
+    }));
+}
+
+function encodePlansMapForFirestore(
+  plansMap: Record<string, MonthPlan[]> | undefined
+): Record<string, Array<Record<string, unknown>>> {
+  const out: Record<string, Array<Record<string, unknown>>> = {};
+  for (const [k, list] of Object.entries(plansMap || {})) {
+    if (!k) continue;
+    out[k] = encodeMonthListForFirestore(list || []);
+  }
+  return out;
+}
+
+function decodePlansMapFromFirestore(rawPlans: unknown): Record<string, MonthPlan[]> {
+  if (!rawPlans || typeof rawPlans !== 'object') return {};
+  const out: Record<string, MonthPlan[]> = {};
+  for (const [k, v] of Object.entries(rawPlans as Record<string, unknown>)) {
+    out[k] = decodeMonthListFromFirestore(v);
+  }
+  return out;
+}
+
+function buildFirestoreMetaMap(metaObj: {
+  users: string[];
+  plans: Record<string, MonthPlan[]>;
+  prs: AppState['prs'];
+  prx: AppState['prx'];
+  bwh: AppState['bwh'];
+  annex: AppState['annex'];
+  axs: number;
+}): Record<string, unknown> {
+  return stripUndefined({
+    users: metaObj.users,
+    plans: encodePlansMapForFirestore(metaObj.plans),
+    prs: metaObj.prs,
+    prx: metaObj.prx,
+    bwh: metaObj.bwh,
+    annex: metaObj.annex,
+    axs: metaObj.axs,
+  });
+}
+
+function unwrapRawFirestoreObject(raw: unknown): Record<string, unknown> | null {
   if (!raw) return null;
   if (typeof raw === 'string') {
     try {
-      return JSON.parse(raw) as Record<string, unknown>;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
     } catch {
       return null;
     }
   }
-  if (typeof raw === 'object') return raw as Record<string, unknown>;
+  if (typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.j === 'string') {
+      try {
+        const parsed = JSON.parse(obj.j);
+        return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : obj;
+      } catch {
+        return obj;
+      }
+    }
+    return obj;
+  }
   return null;
+}
+
+function safeDocDataToMeta(raw: unknown): Record<string, unknown> | null {
+  const obj = unwrapRawFirestoreObject(raw);
+  if (!obj) return null;
+  if (obj.plans && typeof obj.plans === 'object') {
+    return {
+      ...obj,
+      plans: decodePlansMapFromFirestore(obj.plans),
+    };
+  }
+  return obj;
+}
+
+function safeDocDataToCplans(raw: unknown): Record<string, MonthPlan[]> | null {
+  const obj = unwrapRawFirestoreObject(raw);
+  if (!obj) return null;
+  return decodePlansMapFromFirestore(obj);
+}
+
+function sanitizeSessionId(rawId: string): string {
+  const cleaned = String(rawId || '')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 128);
+  return cleaned || uid();
 }
 
 function resolveAthleteCanonicalName(params: {
@@ -215,49 +362,74 @@ function parseFirestoreSession(
     }
     if (!parsed || typeof parsed !== 'object') return null;
     const clean = sanRemote(parsed) as TrainingSession;
+    const tmExtra = clean.tm as (TrainingSession['tm'] & { fin?: number; by?: 'coach' | 'atleta' }) | undefined;
+    const restoredFinishedAt =
+      clean.finishedAt ?? (typeof tmExtra?.fin === 'number' ? tmExtra.fin : undefined);
+    const restoredUpdatedBy =
+      clean.updatedBy ??
+      (tmExtra?.by === 'coach' || tmExtra?.by === 'atleta' ? tmExtra.by : undefined);
     return {
       ...clean,
-      id,
+      id: sanitizeSessionId(clean.id || id),
       ...(forcedUser ? { user: forcedUser } : {}),
+      ...(restoredFinishedAt ? { finishedAt: restoredFinishedAt } : {}),
+      ...(restoredUpdatedBy ? { updatedBy: restoredUpdatedBy } : {}),
     };
   } catch {
     return null;
   }
 }
 
-function buildFirestoreSessionPayload(s: TrainingSession) {
+function buildFirestoreSessionPayload(s: TrainingSession, fixedTs?: number) {
+  const safeId = sanitizeSessionId(s.id);
   const safeDate =
     s.date && /^\d{4}-\d{2}-\d{2}$/.test(s.date) ? s.date : todayStr();
-  const safeRpe =
-    s.rpe !== undefined && s.rpe !== null
-      ? Math.min(10, Math.max(0, Number(s.rpe) || 0))
-      : undefined;
-  const safeFeel =
-    s.feel !== undefined && s.feel !== null
-      ? Math.min(5, Math.max(0, Number(s.feel) || 0))
-      : undefined;
-  const safeBw =
-    s.bw !== undefined && s.bw !== null
-      ? Math.min(500, Math.max(0, Number(s.bw) || 0))
-      : undefined;
 
+  const rawRpe = s.rpe !== undefined && s.rpe !== null && String(s.rpe) !== '' ? Number(s.rpe) : NaN;
+  const safeRpe = Number.isFinite(rawRpe) ? Math.min(10, Math.max(0, rawRpe)) : undefined;
+
+  const rawFeel = s.feel !== undefined && s.feel !== null && String(s.feel) !== '' ? Number(s.feel) : NaN;
+  const safeFeel = Number.isFinite(rawFeel) ? Math.min(5, Math.max(0, rawFeel)) : undefined;
+
+  const rawBw = s.bw !== undefined && s.bw !== null && String(s.bw) !== '' ? Number(s.bw) : NaN;
+  const safeBw = Number.isFinite(rawBw) ? Math.min(500, Math.max(0, rawBw)) : undefined;
+
+  const safeExercises = (Array.isArray(s.exercises) ? s.exercises : [])
+    .filter((ex) => ex && typeof ex === 'object')
+    .slice(0, 80);
+
+  const hasTimerOrMeta = Boolean(s.tm || s.finishedAt || s.updatedBy);
+  const safeTm = hasTimerOrMeta
+    ? stripUndefined({
+        st: Number(s.tm?.st || 0),
+        acc: Number(s.tm?.acc || 0),
+        ...(s.tm?.auto ? { auto: Number(s.tm.auto) } : {}),
+        ...(s.finishedAt ? { fin: Number(s.finishedAt) } : {}),
+        ...(s.updatedBy ? { by: s.updatedBy } : {}),
+      })
+    : undefined;
+
+  // Strictly match firestore.rules isValidSession allowed keys:
+  // ['id', 'user', 'date', 'sport', 'name', 'mid', 'exercises', 'rpe', 'feel', 'notes', 'tm', 'bw', 'ts']
   return stripUndefined({
-    id: String(s.id).slice(0, 128),
-    user: String(s.user || '').slice(0, 60),
+    id: safeId,
+    user: String(s.user || 'Atleta').slice(0, 60),
     date: safeDate,
     sport: String(s.sport || 'Gimnasio').slice(0, 40),
-    name: s.name !== undefined ? String(s.name).slice(0, 140) : undefined,
-    mid: s.mid !== undefined ? String(s.mid).slice(0, 64) : undefined,
-    exercises: (s.exercises || []).slice(0, 80),
+    name: typeof s.name === 'string' ? s.name.slice(0, 140) : undefined,
+    mid: typeof s.mid === 'string' ? s.mid.slice(0, 64) : undefined,
+    exercises: safeExercises,
     rpe: safeRpe,
     feel: safeFeel,
-    notes: s.notes !== undefined ? String(s.notes).slice(0, 2000) : undefined,
-    tm: s.tm,
+    notes: typeof s.notes === 'string' ? s.notes.slice(0, 2000) : undefined,
+    tm: safeTm,
     bw: safeBw,
-    ts: Number(s.ts || Date.now()),
-    finishedAt: s.finishedAt ? Number(s.finishedAt) : undefined,
-    updatedBy: s.updatedBy,
+    ts: fixedTs !== undefined ? fixedTs : Number(s.ts || Date.now()),
   });
+}
+
+function buildFirestoreSessionSignature(s: TrainingSession): string {
+  return JSON.stringify(buildFirestoreSessionPayload(s, 0));
 }
 
 function getSyncableAnnexes(annex: AppState['annex']) {
@@ -343,6 +515,8 @@ function MainApp() {
   const athleteNameRef = useRef<string>('');
   const studentNameByUidRef = useRef<Record<string, string>>({});
   const pendingSignupNameRef = useRef<string>('');
+  const autoAcceptSignupRef = useRef(false);
+  const autoAcceptBusyRef = useRef(false);
   const prevAuthUidRef = useRef<string | null>(null);
   const authEpochRef = useRef(0);
 
@@ -578,7 +752,7 @@ function MainApp() {
     pushInFlightRef.current = true;
 
     try {
-      // 1. Sync own user meta if changed (stored as JSON string to match original trazikfit-5fafa)
+      // 1. Sync own user meta if changed (stored strictly as Firestore map to satisfy firestore.rules)
       const cleanAnnex = getSyncableAnnexes(cur.annex);
       const ownPlans: Record<string, MonthPlan[]> = {};
       if (isTrainer) {
@@ -613,69 +787,71 @@ function MainApp() {
       const metaSerialized = JSON.stringify(metaObj);
       if (metaSerialized !== lastPushedMetaRef.current) {
         const nowTs = Date.now();
-        lastPushedMetaRef.current = metaSerialized;
         const fallbackAthName =
           cleanName(user.displayName || '') ||
           (user.email || '').split('@')[0] ||
           'Atleta';
+        const effectiveProfileName = isTrainer
+          ? fallbackAthName
+          : String(effectiveAth || fallbackAthName);
         await updateDoc(
           doc(db, 'users', user.uid),
           stripUndefined({
-            name: fallbackAthName,
+            name: effectiveProfileName.slice(0, 100),
             email: (user.email || '').toLowerCase(),
             ath: String(effectiveAth || fallbackAthName).slice(0, 60),
             ts: nowTs,
-            meta: metaSerialized,
+            meta: buildFirestoreMetaMap(metaObj),
           })
         );
+        lastPushedMetaRef.current = metaSerialized;
       }
 
-      // 2. Sync trainer-modified plans for linked athletes (JSON string matching trazikfit-5fafa)
+      // 2. Sync trainer-modified plans for linked athletes (Firestore map with encoded blocks)
       if (isTrainer) {
         for (const [ath, stuUid] of Object.entries(cur.linked || {})) {
           const athPlans = cur.plans[ath] || [];
           const serialized = JSON.stringify(athPlans);
           if (lastPushedPlansRef.current[ath] !== serialized) {
-            lastPushedPlansRef.current[ath] = serialized;
             await updateDoc(
               doc(db, 'users', stuUid),
               stripUndefined({
-                cplans: JSON.stringify({ [ath]: athPlans }),
+                cplans: encodePlansMapForFirestore({ [ath]: athPlans }),
                 cts: Date.now(),
               })
             );
+            lastPushedPlansRef.current[ath] = serialized;
           }
         }
       }
 
-      // 3. Sync sessions diff using original { j: JSON.stringify(session), ts } format
+      // 3. Sync sessions diff using flat Firestore schema matching firestore.rules isValidSession
       const nextSessionMap = new Map<string, string>();
       for (const s of cur.sessions) {
         if (!s.id) continue;
         if (!isTrainer && s.user !== effectiveAth) continue;
         const targetUid = isTrainer ? cur.linked?.[s.user] || user.uid : user.uid;
         if (targetUid !== user.uid && !isTrainer) continue;
-        const payload = buildFirestoreSessionPayload(
-          isTrainer ? s : { ...s, user: effectiveAth }
-        );
-        const key = `${targetUid}/${s.id}`;
-        const json = JSON.stringify(payload);
-        nextSessionMap.set(key, json);
-        if (lastPushedSessionsRef.current.get(key) !== json) {
-          await setDoc(doc(db, 'users', targetUid, 'sessions', s.id), {
-            j: json,
-            ts: Date.now(),
-          });
+        const safeSid = sanitizeSessionId(s.id);
+        const sessionForTarget = isTrainer ? s : { ...s, user: effectiveAth };
+        const payload = buildFirestoreSessionPayload(sessionForTarget);
+        const key = `${targetUid}/${safeSid}`;
+        const sig = buildFirestoreSessionSignature(sessionForTarget);
+        nextSessionMap.set(key, sig);
+        if (lastPushedSessionsRef.current.get(key) !== sig) {
+          await setDoc(doc(db, 'users', targetUid, 'sessions', safeSid), payload);
+          lastPushedSessionsRef.current.set(key, sig);
         }
       }
 
-      for (const prevKey of lastPushedSessionsRef.current.keys()) {
+      for (const prevKey of Array.from(lastPushedSessionsRef.current.keys())) {
         if (!nextSessionMap.has(prevKey)) {
           const slash = prevKey.indexOf('/');
           if (slash > 0) {
             const tUid = prevKey.slice(0, slash);
             const sid = prevKey.slice(slash + 1);
             await deleteDoc(doc(db, 'users', tUid, 'sessions', sid));
+            lastPushedSessionsRef.current.delete(prevKey);
           }
         }
       }
@@ -755,6 +931,9 @@ function MainApp() {
       lastPushedPlansRef.current = {};
       athleteNameRef.current = '';
       studentNameByUidRef.current = {};
+      autoAcceptSignupRef.current = false;
+      autoAcceptBusyRef.current = false;
+      myDocRef.current = {};
       notifWmRef.current = {};
       completedCircuitSessionRef.current = null;
 
@@ -853,7 +1032,7 @@ function MainApp() {
       notifWmRef.current = loadNotificationWatermark(user.uid);
       setNotifPermission(getNotificationPermission());
 
-      const emailLower = (user.email || '').toLowerCase();
+      const emailLower = (user.email || '').trim().toLowerCase();
       const isOwner = user.emailVerified && OWNER_EMAILS.includes(emailLower);
 
       // Consume pending signup name chosen by the athlete in LoginView ("Crear cuenta")
@@ -865,6 +1044,7 @@ function MainApp() {
           // ignore
         }
       }
+      const hadPendingSignupName = Boolean(pendingName);
       pendingSignupNameRef.current = '';
       try {
         localStorage.removeItem(PENDING_SIGNUP_NAME_KEY);
@@ -879,6 +1059,37 @@ function MainApp() {
         }
       }
       if (authEpochRef.current !== myEpoch) return;
+
+      // Attach incoming invites listener IMMEDIATELY & unconditionally so invites appear automatically
+      if (user.emailVerified && emailLower) {
+        const unsubInvIn = onSnapshot(
+          query(collection(db, 'invites'), where('to', '==', emailLower)),
+          (snap) => {
+            if (authEpochRef.current !== myEpoch) return;
+            const list: InviteItem[] = [];
+            snap.forEach((d) => {
+              const o = d.data();
+              list.push({
+                id: d.id,
+                to: String(o.to || ''),
+                coachUid: String(o.coachUid || ''),
+                coachName: String(o.coachName || 'Entrenador'),
+                ts: Number(o.ts || 0),
+              });
+            });
+            setInvIn(list);
+            setInvLoaded(true);
+          },
+          (err) => {
+            if (authEpochRef.current !== myEpoch) return;
+            setCloudMsg((prev) => prev || friendlyFirestoreError(err));
+            setInvLoaded(true);
+          }
+        );
+        cloudUnsubsRef.current.push(unsubInvIn);
+      } else {
+        setInvLoaded(true);
+      }
 
       try {
         // 1. Owner bootstrap (singleton + role doc only if not yet present in trazikfit-5fafa)
@@ -1012,7 +1223,7 @@ function MainApp() {
 
         const isCoachAccount = resolvedRole.role === 'trainer';
 
-        // 4. Read/create users/{uid} cleanly (100% blank state for brand-new accounts until coach plans)
+        // 4. Read/create users/{uid} cleanly (100% blank state for brand-new accounts, valid Firestore map)
         const userDocRef = doc(db, 'users', user.uid);
         const userSnap = await getDoc(userDocRef);
         if (authEpochRef.current !== myEpoch) return;
@@ -1038,10 +1249,14 @@ function MainApp() {
               ath: pendingName.slice(0, 60),
             };
           }
-          setMyDoc({
-            coaches: (initialUserData.coaches as string[]) || [],
+          const nextMyDoc = {
+            coaches: Array.isArray(initialUserData.coaches)
+              ? (initialUserData.coaches as string[])
+              : [],
             cn: (initialUserData.cn as Record<string, string>) || {},
-          });
+          };
+          myDocRef.current = nextMyDoc;
+          setMyDoc(nextMyDoc);
           // Track existing remote meta signature immediately so local cache never overwrites remote
           const existingMetaObj = safeDocDataToMeta(initialUserData.meta);
           if (existingMetaObj) {
@@ -1053,7 +1268,7 @@ function MainApp() {
             cleanName(user.displayName || '') ||
             emailLower.split('@')[0].slice(0, 30) ||
             'Atleta';
-          const blankMeta = JSON.stringify({
+          const blankMetaObj = {
             users: isCoachAccount ? [] : [dispName.slice(0, 60)],
             plans: isCoachAccount ? {} : { [dispName.slice(0, 60)]: [] },
             prs: [],
@@ -1061,7 +1276,7 @@ function MainApp() {
             bwh: [],
             annex: [],
             axs: 1,
-          });
+          };
           initialUserData = {
             coaches: [],
             cn: {},
@@ -1069,16 +1284,28 @@ function MainApp() {
             email: emailLower,
             ath: dispName.slice(0, 60),
             ts: 0,
-            meta: blankMeta,
+            meta: buildFirestoreMetaMap(blankMetaObj),
           };
           await setDoc(userDocRef, stripUndefined(initialUserData));
           if (authEpochRef.current !== myEpoch) return;
-          lastPushedMetaRef.current = blankMeta;
+          myDocRef.current = { coaches: [], cn: {} };
+          setMyDoc({ coaches: [], cn: {} });
+          lastPushedMetaRef.current = JSON.stringify(blankMetaObj);
         }
+
+        // Allow auto-linking when athlete just signed up via "Crear cuenta" or brand-new account with 0 coaches
+        const existingCoachesCount = Array.isArray(initialUserData?.coaches)
+          ? (initialUserData!.coaches as string[]).length
+          : 0;
+        autoAcceptSignupRef.current =
+          !isCoachAccount &&
+          user.emailVerified &&
+          existingCoachesCount === 0 &&
+          (hadPendingSignupName || !userDocExisted);
 
         // Resolve canonical athlete identity from authenticated Google account + Firestore users/{uid}
         const initialMetaObj = safeDocDataToMeta(initialUserData?.meta);
-        const initialCplansObj = safeDocDataToMeta(initialUserData?.cplans);
+        const initialCplansObj = safeDocDataToCplans(initialUserData?.cplans);
         const initialAthName = !isCoachAccount
           ? pendingName ||
             resolveAthleteCanonicalName({
@@ -1145,13 +1372,15 @@ function MainApp() {
             if (authEpochRef.current !== myEpoch) return;
             if (!snap.metadata.hasPendingWrites && snap.exists()) {
               const d = snap.data() as Record<string, unknown>;
-              setMyDoc({
-                coaches: (d.coaches as string[]) || [],
+              const nextMyDoc = {
+                coaches: Array.isArray(d.coaches) ? (d.coaches as string[]) : [],
                 cn: (d.cn as Record<string, string>) || {},
-              });
+              };
+              myDocRef.current = nextMyDoc;
+              setMyDoc(nextMyDoc);
 
               const remoteMeta = safeDocDataToMeta(d.meta);
-              const remoteCplans = safeDocDataToMeta(d.cplans);
+              const remoteCplans = safeDocDataToCplans(d.cplans);
               const remoteTs = Number(d.ts || 0);
               const remoteCts = Number(d.cts || 0);
 
@@ -1449,10 +1678,11 @@ function MainApp() {
                   const dirtyLocalById = new Map<string, TrainingSession>();
                   prev.sessions.forEach((ls) => {
                     if (!ls.id || ls.user !== activeAth) return;
-                    const key = `${user.uid}/${ls.id}`;
-                    const localJson = JSON.stringify(buildFirestoreSessionPayload(ls));
-                    if (lastPushedSessionsRef.current.get(key) !== localJson) {
-                      dirtyLocalById.set(ls.id, ls);
+                    const safeSid = sanitizeSessionId(ls.id);
+                    const key = `${user.uid}/${safeSid}`;
+                    const localSig = buildFirestoreSessionSignature(ls);
+                    if (lastPushedSessionsRef.current.get(key) !== localSig) {
+                      dirtyLocalById.set(safeSid, ls);
                     }
                   });
 
@@ -1462,16 +1692,22 @@ function MainApp() {
                     }
                   }
                   const mergedOwn = normalizedOwn.map((rs) => {
-                    const key = `${user.uid}/${rs.id}`;
+                    const safeSid = sanitizeSessionId(rs.id);
+                    const key = `${user.uid}/${safeSid}`;
                     lastPushedSessionsRef.current.set(
                       key,
-                      JSON.stringify(buildFirestoreSessionPayload(rs))
+                      buildFirestoreSessionSignature(rs)
                     );
-                    const dirty = dirtyLocalById.get(rs.id);
+                    const dirty = dirtyLocalById.get(safeSid);
                     if (dirty && Number(dirty.ts || 0) > Number(rs.ts || 0)) {
                       return dirty;
                     }
                     return rs;
+                  });
+                  dirtyLocalById.forEach((dirty, sid) => {
+                    if (!mergedOwn.some((m) => sanitizeSessionId(m.id) === sid)) {
+                      mergedOwn.push(dirty);
+                    }
                   });
                   return markRemoteState({
                     ...prev,
@@ -1486,23 +1722,45 @@ function MainApp() {
                 const studentSessions = prev.sessions.filter((s) => linkedUserNames.has(s.user));
                 const remoteOwn = remoteList.filter((s) => !linkedUserNames.has(s.user));
 
+                const dirtyOwnById = new Map<string, TrainingSession>();
+                prev.sessions.forEach((ls) => {
+                  if (!ls.id || linkedUserNames.has(ls.user)) return;
+                  const safeSid = sanitizeSessionId(ls.id);
+                  const key = `${user.uid}/${safeSid}`;
+                  const localSig = buildFirestoreSessionSignature(ls);
+                  if (lastPushedSessionsRef.current.get(key) !== localSig) {
+                    dirtyOwnById.set(safeSid, ls);
+                  }
+                });
+
                 for (const key of Array.from(lastPushedSessionsRef.current.keys())) {
                   if (key.startsWith(`${user.uid}/`)) {
                     lastPushedSessionsRef.current.delete(key);
                   }
                 }
-                remoteOwn.forEach((s) => {
-                  const key = `${user.uid}/${s.id}`;
+                const mergedOwnCoach = remoteOwn.map((rs) => {
+                  const safeSid = sanitizeSessionId(rs.id);
+                  const key = `${user.uid}/${safeSid}`;
                   lastPushedSessionsRef.current.set(
                     key,
-                    JSON.stringify(buildFirestoreSessionPayload(s))
+                    buildFirestoreSessionSignature(rs)
                   );
+                  const dirty = dirtyOwnById.get(safeSid);
+                  if (dirty && Number(dirty.ts || 0) > Number(rs.ts || 0)) {
+                    return dirty;
+                  }
+                  return rs;
+                });
+                dirtyOwnById.forEach((dirty, sid) => {
+                  if (!mergedOwnCoach.some((m) => sanitizeSessionId(m.id) === sid)) {
+                    mergedOwnCoach.push(dirty);
+                  }
                 });
 
-                if (userDocExisted || remoteOwn.length > 0 || isDifferentAccount) {
+                if (userDocExisted || mergedOwnCoach.length > 0 || isDifferentAccount) {
                   return markRemoteState({
                     ...prev,
-                    sessions: [...studentSessions, ...remoteOwn],
+                    sessions: [...studentSessions, ...mergedOwnCoach],
                   });
                 }
                 return prev;
@@ -1570,39 +1828,12 @@ function MainApp() {
         );
         cloudUnsubsRef.current.push(unsubOwnSessions);
 
-        // 7. Incoming invites listener
-        if (emailLower) {
-          const unsubInvIn = onSnapshot(
-            query(collection(db, 'invites'), where('to', '==', emailLower)),
-            (snap) => {
-              const list: InviteItem[] = [];
-              snap.forEach((d) => {
-                const o = d.data();
-                list.push({
-                  id: d.id,
-                  to: String(o.to || ''),
-                  coachUid: String(o.coachUid || ''),
-                  coachName: String(o.coachName || 'Entrenador'),
-                  ts: Number(o.ts || 0),
-                });
-              });
-              setInvIn(list);
-              setInvLoaded(true);
-            },
-            () => {
-              setInvLoaded(true);
-            }
-          );
-          cloudUnsubsRef.current.push(unsubInvIn);
-        } else {
-          setInvLoaded(true);
-        }
-
-        // 8. Trainer listeners (outgoing invites + linked students + student sessions)
+        // 7. Trainer listeners (outgoing invites + linked students + student sessions)
         if (isCoachAccount) {
           const unsubInvOut = onSnapshot(
             query(collection(db, 'invites'), where('coachUid', '==', user.uid)),
             (snap) => {
+              if (authEpochRef.current !== myEpoch) return;
               const list: InviteItem[] = [];
               snap.forEach((d) => {
                 const o = d.data();
@@ -1626,17 +1857,23 @@ function MainApp() {
               if (authEpochRef.current !== myEpoch || snap.metadata.hasPendingWrites) return;
               const nextLinked: Record<string, string> = {};
               const studentPlansMerge: Record<string, MonthPlan[]> = {};
+              const studentHasRemoteCplans: Record<string, boolean> = {};
               const renamedPairs: Array<{ from: string; to: string }> = [];
 
               snap.forEach((stuDoc) => {
                 if (stuDoc.id === user.uid) return;
                 const d = stuDoc.data();
                 const rawAth = cleanName(String(d.ath || ''));
-                const resolvedStuAth =
+                let resolvedStuAth =
                   rawAth ||
                   cleanName(String(d.name || '')) ||
                   cleanName(String(d.email || '').split('@')[0]) ||
                   `Atleta_${stuDoc.id.slice(0, 4)}`;
+
+                if (nextLinked[resolvedStuAth] && nextLinked[resolvedStuAth] !== stuDoc.id) {
+                  const emailTag = cleanName(String(d.email || '').split('@')[0]);
+                  resolvedStuAth = `${resolvedStuAth} (${emailTag || stuDoc.id.slice(0, 4)})`;
+                }
 
                 const prevStuAth = studentNameByUidRef.current[stuDoc.id];
                 if (prevStuAth && prevStuAth !== resolvedStuAth) {
@@ -1646,9 +1883,9 @@ function MainApp() {
                 nextLinked[resolvedStuAth] = stuDoc.id;
 
                 const meta = safeDocDataToMeta(d.meta);
-                const cp = safeDocDataToMeta(d.cplans);
+                const cp = safeDocDataToCplans(d.cplans);
                 const metaPlans = (meta?.plans as Record<string, MonthPlan[]>) || {};
-                const cpPlans = (cp as Record<string, MonthPlan[]>) || {};
+                const cpPlans = cp || {};
                 const cpKeys = Object.keys(cpPlans);
                 const firstCpPlans = cpKeys.length ? cpPlans[cpKeys[0]] : undefined;
                 const metaFallback = metaPlans[resolvedStuAth] || metaPlans[d.ath || ''] || [];
@@ -1658,6 +1895,7 @@ function MainApp() {
                   cpPlans[d.ath || ''] ??
                   firstCpPlans ??
                   metaFallback;
+                studentHasRemoteCplans[resolvedStuAth] = cp !== null && cpKeys.length > 0;
                 studentPlansMerge[resolvedStuAth] = sanRemote(chosenPlans);
 
                 // Attach session listener for this student if not yet attached
@@ -1681,10 +1919,11 @@ function MainApp() {
                         const dirtyLocalById = new Map<string, TrainingSession>();
                         prev.sessions.forEach((ls) => {
                           if (!ls.id || ls.user !== liveAthName) return;
-                          const key = `${stuDoc.id}/${ls.id}`;
-                          const localJson = JSON.stringify(buildFirestoreSessionPayload(ls));
-                          if (lastPushedSessionsRef.current.get(key) !== localJson) {
-                            dirtyLocalById.set(ls.id, ls);
+                          const safeSid = sanitizeSessionId(ls.id);
+                          const key = `${stuDoc.id}/${safeSid}`;
+                          const localSig = buildFirestoreSessionSignature(ls);
+                          if (lastPushedSessionsRef.current.get(key) !== localSig) {
+                            dirtyLocalById.set(safeSid, ls);
                           }
                         });
 
@@ -1694,12 +1933,13 @@ function MainApp() {
                           }
                         }
                         const mergedStu = stuSess.map((rs) => {
-                          const key = `${stuDoc.id}/${rs.id}`;
+                          const safeSid = sanitizeSessionId(rs.id);
+                          const key = `${stuDoc.id}/${safeSid}`;
                           lastPushedSessionsRef.current.set(
                             key,
-                            JSON.stringify(buildFirestoreSessionPayload(rs))
+                            buildFirestoreSessionSignature(rs)
                           );
-                          const dirty = dirtyLocalById.get(rs.id);
+                          const dirty = dirtyLocalById.get(safeSid);
                           if (dirty && Number(dirty.ts || 0) > Number(rs.ts || 0)) {
                             return dirty;
                           }
@@ -1707,7 +1947,7 @@ function MainApp() {
                         });
                         // Also preserve brand-new local sessions created for this athlete awaiting push
                         dirtyLocalById.forEach((dirty, sid) => {
-                          if (!mergedStu.some((m) => m.id === sid)) {
+                          if (!mergedStu.some((m) => sanitizeSessionId(m.id) === sid)) {
                             mergedStu.push(dirty);
                           }
                         });
@@ -1796,8 +2036,13 @@ function MainApp() {
                     prevPushed !== undefined &&
                     localJson !== prevPushed &&
                     (pushTimerRef.current !== null || pushInFlightRef.current);
+                  const newlyLinkedWithLocalPlan =
+                    !prev.linked?.[ath] &&
+                    Boolean(localList && localList.length > 0) &&
+                    !studentHasRemoteCplans[ath] &&
+                    remoteList.length === 0;
 
-                  if (!hasPendingCoachEdit) {
+                  if (!hasPendingCoachEdit && !newlyLinkedWithLocalPlan) {
                     nextPlans[ath] = remoteList;
                     lastPushedPlansRef.current[ath] = JSON.stringify(remoteList);
                   }
@@ -2070,10 +2315,12 @@ function MainApp() {
       } catch {
         // non-fatal
       }
+      const emailLower = (u.email || '').trim().toLowerCase();
       await updateDoc(
         doc(db, 'users', u.uid),
         stripUndefined({
           name: cleaned,
+          email: emailLower,
           ath: cleaned.slice(0, 60),
           ts: Date.now(),
         })
@@ -2083,7 +2330,7 @@ function MainApp() {
           doc(db, 'directory', u.uid),
           stripUndefined({
             name: cleaned,
-            email: (u.email || '').toLowerCase(),
+            email: emailLower,
             lastLogin: Date.now(),
           }),
           { merge: true }
@@ -2109,23 +2356,26 @@ function MainApp() {
 
   // Invite / Coach Link Handlers
   const handleInviteStudent = async (rawEmail: string) => {
-    const email = rawEmail.trim().toLowerCase();
+    const email = rawEmail.trim().toLowerCase().slice(0, 200);
     if (!me || !me.emailVerified) {
       setCloudMsg('Inicia sesión con una cuenta verificada para invitar.');
       return;
     }
-    if (!email || !email.includes('@')) {
+    if (!email || email.length < 3 || !email.includes('@')) {
       setCloudMsg('Ingresa un correo electrónico válido.');
       return;
     }
-    if (email === (me.email || '').toLowerCase()) {
+    if (email === (me.email || '').trim().toLowerCase()) {
       setCloudMsg('No puedes invitarte a ti mismo.');
       return;
     }
     try {
       const id = `${me.uid}_${email}`;
-      const coachName =
-        cleanName(me.displayName || '') || (me.email || '').split('@')[0] || 'Entrenador';
+      const coachName = (
+        cleanName(me.displayName || '') ||
+        (me.email || '').split('@')[0] ||
+        'Entrenador'
+      ).slice(0, 120);
       await setDoc(doc(db, 'invites', id), {
         to: email,
         coachUid: me.uid,
@@ -2138,56 +2388,145 @@ function MainApp() {
     }
   };
 
-  const handleAcceptInvite = async (inviteId: string, preferredName?: string) => {
-    if (!me || !me.emailVerified) return;
-    const inv = invIn.find((i) => i.id === inviteId);
-    const coachUid = inv?.coachUid || inviteId.split('_')[0];
-    const coachName = inv?.coachName || 'Entrenador';
-    const cleanedPref = cleanName(preferredName || '');
-    const canonicalAth =
-      (cleanedPref.length >= 2 ? cleanedPref : '') ||
-      athleteNameRef.current ||
-      resolveAthleteCanonicalName({ user: me, fallbackName: stateRef.current.user });
-    try {
-      if (cleanedPref.length >= 2) {
-        try {
-          await updateProfile(me, { displayName: canonicalAth });
-        } catch {
-          // non-fatal
+  const handleAcceptInvite = useCallback(
+    async (inviteId: string, preferredName?: string) => {
+      const currentMe = meRef.current;
+      if (!currentMe || !currentMe.emailVerified) return;
+      const inv = invIn.find((i) => i.id === inviteId);
+      const coachUid = inv?.coachUid || inviteId.split('_')[0];
+      const coachName = inv?.coachName || 'Entrenador';
+      const cleanedPref = cleanName(preferredName || '');
+      const canonicalAth =
+        (cleanedPref.length >= 2 ? cleanedPref : '') ||
+        athleteNameRef.current ||
+        resolveAthleteCanonicalName({
+          user: currentMe,
+          fallbackName: stateRef.current.user,
+        });
+      const emailLower = (currentMe.email || '').trim().toLowerCase();
+
+      try {
+        if (cleanedPref.length >= 2) {
+          try {
+            await updateProfile(currentMe, { displayName: canonicalAth });
+          } catch {
+            // non-fatal
+          }
+          try {
+            await setDoc(
+              doc(db, 'directory', currentMe.uid),
+              stripUndefined({
+                name: canonicalAth,
+                email: emailLower,
+                lastLogin: Date.now(),
+              }),
+              { merge: true }
+            );
+          } catch {
+            // non-fatal
+          }
         }
+
+        const userRef = doc(db, 'users', currentMe.uid);
+        const userSnap = await getDoc(userRef);
+        let existingCoaches: string[] = [];
+        let existingCn: Record<string, string> = {};
+
+        if (!userSnap.exists()) {
+          const blankMetaObj = {
+            users: [canonicalAth.slice(0, 60)],
+            plans: { [canonicalAth.slice(0, 60)]: [] },
+            prs: [],
+            prx: [],
+            bwh: [],
+            annex: [],
+            axs: 1,
+          };
+          await setDoc(
+            userRef,
+            stripUndefined({
+              coaches: [],
+              cn: {},
+              name: canonicalAth,
+              email: emailLower,
+              ath: canonicalAth.slice(0, 60),
+              ts: 0,
+              meta: buildFirestoreMetaMap(blankMetaObj),
+            })
+          );
+        } else {
+          const uData = userSnap.data() as Record<string, unknown>;
+          existingCoaches = Array.isArray(uData.coaches)
+            ? (uData.coaches as string[]).filter((c) => typeof c === 'string' && c.length > 0)
+            : [];
+          existingCn =
+            uData.cn && typeof uData.cn === 'object' ? (uData.cn as Record<string, string>) : {};
+        }
+
+        const nextCoaches = existingCoaches.includes(coachUid)
+          ? existingCoaches
+          : [...existingCoaches, coachUid];
+        const nextCn = { ...existingCn, [coachUid]: coachName };
+
+        // Must update users/{uid} BEFORE deleting invite because firestore.rules inviteOk() verifies invite existence
+        await updateDoc(
+          userRef,
+          stripUndefined({
+            coaches: nextCoaches,
+            cn: nextCn,
+            name: canonicalAth,
+            email: emailLower,
+            ath: canonicalAth.slice(0, 60),
+            ts: Date.now(),
+          })
+        );
+        await deleteDoc(doc(db, 'invites', inviteId));
+
+        athleteNameRef.current = canonicalAth;
+        const nextMyDoc = { coaches: nextCoaches, cn: nextCn };
+        myDocRef.current = nextMyDoc;
+        setMyDoc(nextMyDoc);
+        setS((prev) =>
+          markRemoteState({
+            ...prev,
+            user: canonicalAth,
+            users: [canonicalAth],
+            plans: { [canonicalAth]: prev.plans[prev.user] || prev.plans[canonicalAth] || [] },
+          })
+        );
+        setCloudMsg('✓ Entrenador vinculado');
+        playActionCue('save');
+        showToast('Invitación aceptada');
+      } catch (err) {
+        setCloudMsg(friendlyFirestoreError(err));
+      } finally {
+        autoAcceptBusyRef.current = false;
       }
-      // Must update users/{uid} BEFORE deleting invite because firestore.rules inviteOk() verifies invite existence
-      await updateDoc(
-        doc(db, 'users', me.uid),
-        stripUndefined({
-          coaches: arrayUnion(coachUid),
-          cn: { ...(myDoc.cn || {}), [coachUid]: coachName },
-          name: canonicalAth,
-          ath: canonicalAth.slice(0, 60),
-          ts: Date.now(),
-        })
-      );
-      await deleteDoc(doc(db, 'invites', inviteId));
-      athleteNameRef.current = canonicalAth;
-      setS((prev) =>
-        markRemoteState({
-          ...prev,
-          user: canonicalAth,
-          users: [canonicalAth],
-          plans: { [canonicalAth]: prev.plans[prev.user] || prev.plans[canonicalAth] || [] },
-        })
-      );
-      setMyDoc((prev) => ({
-        coaches: Array.from(new Set([...(prev.coaches || []), coachUid])),
-        cn: { ...(prev.cn || {}), [coachUid]: coachName },
-      }));
-      setCloudMsg('✓ Entrenador vinculado');
-      playActionCue('save');
-      showToast('Invitación aceptada');
-    } catch (err) {
-      setCloudMsg(friendlyFirestoreError(err));
+    },
+    [invIn, markRemoteState, showToast]
+  );
+
+  // Automatically accept & link when a brand-new athlete account enters with a coach invitation
+  useEffect(() => {
+    const isTrainerOrAdminNow = roleState.role === 'trainer' || roleState.admin;
+    const hasCoachNow = (myDoc.coaches || []).length > 0;
+    if (
+      !me ||
+      !me.emailVerified ||
+      !ready ||
+      !invLoaded ||
+      isTrainerOrAdminNow ||
+      hasCoachNow ||
+      invIn.length !== 1 ||
+      !autoAcceptSignupRef.current ||
+      autoAcceptBusyRef.current
+    ) {
+      return;
     }
-  };
+    autoAcceptSignupRef.current = false;
+    autoAcceptBusyRef.current = true;
+    void handleAcceptInvite(invIn[0].id, athleteNameRef.current || undefined);
+  }, [me, ready, invLoaded, roleState.role, roleState.admin, myDoc.coaches, invIn, handleAcceptInvite]);
 
   const handleDeleteInvite = async (inviteId: string) => {
     try {
@@ -2266,7 +2605,7 @@ function MainApp() {
 
         await batchDeleteSessionDocs(stuUid, Array.from(allIds));
         await updateDoc(doc(db, 'users', stuUid), {
-          cplans: JSON.stringify({}),
+          cplans: {},
           cts: Date.now(),
         });
 
@@ -2371,16 +2710,16 @@ function MainApp() {
           axs: nextState.axs ?? 1,
         });
         const metaSerialized = JSON.stringify(metaObj);
-        lastPushedMetaRef.current = metaSerialized;
         const nowTs = Date.now();
         await updateDoc(
           doc(db, 'users', user.uid),
           stripUndefined({
             ath: String(nextState.user || 'Usuario').slice(0, 60),
             ts: nowTs,
-            meta: metaSerialized,
+            meta: buildFirestoreMetaMap(metaObj),
           })
         );
+        lastPushedMetaRef.current = metaSerialized;
 
         setS(markRemoteState({ ...nextState, mts: nowTs }));
         await deleteUnusedStorageUrls(candidateUrls, collectStorageUrlsFromState(nextState));
