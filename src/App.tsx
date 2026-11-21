@@ -65,6 +65,7 @@ import {
   newEx,
   normalizeState,
   nz,
+  parseWorkSeconds,
   pd,
   pRest,
   sanRemote,
@@ -123,7 +124,6 @@ import type {
   NotifPermissionState,
   PlanExercise,
   RestTimerState,
-  SetStopwatchState,
   SoundSettings,
   TrainingSession,
   UserRoleState,
@@ -480,7 +480,6 @@ function MainApp() {
 
   // Live timers state
   const [restTimer, setRestTimer] = useState<RestTimerState | null>(() => loadSavedRestTimer());
-  const [stopwatch, setStopwatch] = useState<SetStopwatchState | null>(null);
   const [intervalRunner, setIntervalRunner] = useState<ActiveIntervalRunner | null>(null);
   const [lastCircuitTarget, setLastCircuitTarget] = useState<CircuitIntervalTarget | null>(null);
   const [intervalFlash, setIntervalFlash] = useState(false);
@@ -489,6 +488,8 @@ function MainApp() {
   // Refs for sync & debounced writes
   const stateRef = useRef(S);
   stateRef.current = S;
+  const restTimerRef = useRef(restTimer);
+  restTimerRef.current = restTimer;
   const meRef = useRef(me);
   meRef.current = me;
   const readyRef = useRef(ready);
@@ -511,6 +512,7 @@ function MainApp() {
   const notifBannerTimerRef = useRef<number | null>(null);
   const notifWmRef = useRef<NotificationWatermark>({});
   const lastRestTickSecRef = useRef<number>(-1);
+  const handledRestEndRef = useRef<number | null>(null);
   const completedCircuitSessionRef = useRef<string | null>(null);
   const athleteNameRef = useRef<string>('');
   const studentNameByUidRef = useRef<Record<string, string>>({});
@@ -947,7 +949,7 @@ function MainApp() {
       setNotificationsSheetOpen(false);
       setNotifBanner(null);
       setRestTimer(null);
-      setStopwatch(null);
+      handledRestEndRef.current = null;
       setIntervalRunner(null);
       setLastCircuitTarget(null);
       releaseWakeLock();
@@ -2122,7 +2124,6 @@ function MainApp() {
 
   const anyTimerRunning = Boolean(
     (restTimer && !restTimer.paused) ||
-      stopwatch ||
       (intervalRunner && intervalRunner.running && !intervalRunner.done) ||
       anyRunningSession
   );
@@ -2133,18 +2134,66 @@ function MainApp() {
       const now = Date.now();
       setNowTick(now);
 
-      // Rest timer completion & auto-dismiss
-      setRestTimer((prev) => {
-        if (!prev) return null;
-        if (!prev.paused && !prev.done && now >= prev.end) {
-          beepRestFinished();
-          return { ...prev, done: true, doneAt: now, left: 0 };
+      // Work / Rest timer completion, automatic Work->Rest transition & auto-dismiss
+      const curRest = restTimerRef.current;
+      if (curRest && !curRest.paused && !curRest.done && now >= curRest.end) {
+        if (handledRestEndRef.current !== curRest.end) {
+          handledRestEndRef.current = curRest.end;
+          if (curRest.phase === 'work') {
+            const link = curRest.workLink;
+            if (link) {
+              setS((prev) => ({
+                ...prev,
+                sessions: prev.sessions.map((sess) => {
+                  if (sess.id !== link.sid) return sess;
+                  const exs = [...sess.exercises];
+                  const targetEx = exs[link.exIdx];
+                  if (!targetEx || !targetEx.sets[link.setIdx]) return sess;
+                  const sets = [...targetEx.sets];
+                  const curSet = sets[link.setIdx];
+                  sets[link.setIdx] = {
+                    ...curSet,
+                    b: String(curSet.b || '').trim() ? curSet.b : fm(link.workSec),
+                    done: true,
+                  };
+                  exs[link.exIdx] = { ...targetEx, sets };
+                  return { ...sess, exercises: exs, ts: now };
+                }),
+              }));
+            }
+            const nextRest = Math.max(0, Math.round(curRest.nextRestSec ?? 0));
+            if (nextRest > 0) {
+              ivAlarm('rest');
+              lastRestTickSecRef.current = -1;
+              setRestTimer({
+                end: now + nextRest * 1000,
+                tot: nextRest,
+                base: nextRest,
+                done: false,
+                paused: false,
+                left: nextRest,
+                phase: 'rest',
+              });
+            } else {
+              beepRestFinished();
+              setRestTimer((prev) =>
+                prev && prev.end === curRest.end
+                  ? { ...prev, done: true, doneAt: now, left: 0 }
+                  : prev
+              );
+            }
+          } else {
+            beepRestFinished();
+            setRestTimer((prev) =>
+              prev && prev.end === curRest.end
+                ? { ...prev, done: true, doneAt: now, left: 0 }
+                : prev
+            );
+          }
         }
-        if (prev.done && prev.doneAt && now - prev.doneAt > 20000) {
-          return null;
-        }
-        return prev;
-      });
+      } else if (curRest && curRest.done && curRest.doneAt && now - curRest.doneAt > 20000) {
+        setRestTimer(null);
+      }
 
       // Interval runner phase transitions & countdown tones
       setIntervalRunner((prev) => {
@@ -2218,11 +2267,6 @@ function MainApp() {
       }
     }
   }, [restLeft, restTimer?.paused, restTimer?.done, restTimer]);
-
-  const stopwatchFormatted = useMemo(() => {
-    if (!stopwatch) return '0:00';
-    return fm(Math.max(0, Math.floor((nowTick - stopwatch.t0) / 1000)));
-  }, [stopwatch, nowTick]);
 
   const intervalElapsed = useMemo(() => {
     if (!intervalRunner) return 0;
@@ -2849,7 +2893,7 @@ function MainApp() {
       }),
     }));
     setRestTimer(null);
-    setStopwatch(null);
+    handledRestEndRef.current = null;
     setLastActiveSessionId(null);
     releaseWakeLock();
     setIntervalRunner((prev) => {
@@ -2867,6 +2911,29 @@ function MainApp() {
     setActiveSessionId(null);
     playActionCue('save');
     showToast('Entrenamiento finalizado ✓');
+  };
+
+  const handleUnfinishSession = (targetSession: TrainingSession) => {
+    const now = Date.now();
+    const author: 'coach' | 'atleta' = stateRef.current.role === 'coach' ? 'coach' : 'atleta';
+    setS((prev) => ({
+      ...prev,
+      sessions: prev.sessions.map((s) => {
+        if (s.id !== targetSession.id) return s;
+        const { finishedAt: _omit, ...rest } = s;
+        return {
+          ...rest,
+          exercises: s.exercises.map((e) => ({
+            ...e,
+            sets: e.sets.map((st) => ({ ...st, done: false })),
+          })),
+          ts: now,
+          updatedBy: author,
+        };
+      }),
+    }));
+    playActionCue('delete');
+    showToast('Entrenamiento desmarcado');
   };
 
   const handleDuplicatePlus7 = (s: TrainingSession) => {
@@ -3108,10 +3175,11 @@ function MainApp() {
     showToast('Rutina guardada en tu plan');
   };
 
-  // Session & Rest Timers
+  // Session & Work/Rest Timers
   const startRestCountdown = useCallback((seconds: number) => {
     const sec = Math.max(5, Math.round(seconds));
     const now = Date.now();
+    handledRestEndRef.current = null;
     setRestTimer({
       end: now + sec * 1000,
       tot: sec,
@@ -3119,6 +3187,7 @@ function MainApp() {
       done: false,
       paused: false,
       left: sec,
+      phase: 'rest',
     });
   }, []);
 
@@ -3126,9 +3195,10 @@ function MainApp() {
     unlockAudio();
     const now = Date.now();
 
-    // Rest actions (only rest time supports ±15s, ±1m, and reset to 0:00)
+    // Rest/work timer actions (session elapsed timer is never modified here)
     if (action === 'x' || action === 'rz') {
       lastRestTickSecRef.current = -1;
+      handledRestEndRef.current = null;
       setRestTimer(null);
       return;
     }
@@ -3139,15 +3209,19 @@ function MainApp() {
     }
     if (action === 'rr') {
       playTimerStart();
+      handledRestEndRef.current = null;
       setRestTimer((prev) => {
         const base = prev?.base || 90;
         return {
+          ...(prev || {}),
           end: now + base * 1000,
           tot: base,
           base,
           done: false,
+          doneAt: undefined,
           paused: false,
           left: base,
+          phase: prev?.phase || 'rest',
         };
       });
       return;
@@ -3261,24 +3335,48 @@ function MainApp() {
     }
   };
 
-  const handleToggleStopwatch = (s: TrainingSession, i: number, j: number) => {
+  const handleStartWorkTimer = (s: TrainingSession, i: number, j: number) => {
+    const ex = s.exercises[i];
+    if (!ex || ex.circ) return;
+    const cur = restTimerRef.current;
+    if (
+      cur &&
+      cur.phase === 'work' &&
+      !cur.done &&
+      cur.workLink?.sid === s.id &&
+      cur.workLink.exIdx === i &&
+      cur.workLink.setIdx === j
+    ) {
+      handleTimerAction('rp');
+      return;
+    }
     unlockAudio();
     const now = Date.now();
-    if (stopwatch && stopwatch.sid === s.id && stopwatch.i === i && stopwatch.j === j) {
-      const elapsedSec = Math.max(1, Math.round((now - stopwatch.t0) / 1000));
-      const formatted = fm(elapsedSec);
-      playTimerPause();
-      setStopwatch(null);
-      handleUpdateActiveSession((cur) => {
-        const exs = [...cur.exercises];
-        const sets = [...exs[i].sets];
-        sets[j] = { ...sets[j], b: formatted };
-        exs[i] = { ...exs[i], sets };
-        return { ...cur, exercises: exs };
-      });
-    } else {
-      playTimerStart();
-      setStopwatch({ sid: s.id, i, j, t0: now });
+    const st = ex.sets[j];
+    const workSec = Math.max(5, parseWorkSeconds(st?.b, ex.tg, 45));
+    const nextRestSec = pRest(ex.rest);
+    handledRestEndRef.current = null;
+    lastRestTickSecRef.current = -1;
+    ivAlarm('work');
+    setRestTimer({
+      end: now + workSec * 1000,
+      tot: workSec,
+      base: workSec,
+      done: false,
+      paused: false,
+      left: workSec,
+      phase: 'work',
+      workLabel: ex.name,
+      nextRestSec,
+      workLink: { sid: s.id, exIdx: i, setIdx: j, workSec },
+    });
+    if (!s.tm?.st && !(s.tm?.acc && s.tm.acc > 0)) {
+      setS((prev) => ({
+        ...prev,
+        sessions: prev.sessions.map((x) =>
+          x.id === s.id ? { ...x, tm: { st: now, acc: 0, auto: 1 } } : x
+        ),
+      }));
     }
   };
 
@@ -3507,6 +3605,7 @@ function MainApp() {
         unreadNotifications={unreadNotifCount}
         intervalMiniLeft={intervalMiniLeft}
         restMiniLeft={restMiniLeft}
+        restMiniPhase={restTimer?.phase || 'rest'}
         activeSessionMini={activeSessionMini}
         onNavigate={(view: ActiveView) => {
           haptic('light');
@@ -3720,8 +3819,6 @@ function MainApp() {
         S={S}
         restTimer={restTimer}
         restLeft={restLeft}
-        stopwatch={stopwatch}
-        stopwatchFormatted={stopwatchFormatted}
         nowTick={nowTick}
         sound={S.snd || DEFAULT_SOUND_SETTINGS}
         onToggleSound={handleToggleSound}
@@ -3732,12 +3829,13 @@ function MainApp() {
         }}
         onUpdateSession={handleUpdateActiveSession}
         onFinishSession={handleFinishSession}
+        onUnfinishSession={handleUnfinishSession}
         onStartCircuitIntervals={handleStartCircuitIntervals}
         onDuplicatePlus7={handleDuplicatePlus7}
         onDeleteSession={isCoach ? handleDeleteSession : undefined}
         onTimerAction={handleTimerAction}
         onAutoTimer={handleAutoTimer}
-        onToggleStopwatch={handleToggleStopwatch}
+        onStartWorkTimer={handleStartWorkTimer}
       />
 
       <DayPickerSheet

@@ -284,11 +284,11 @@ export function ProfileView({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 min-w-0">
               <input
                 type="text"
                 inputMode="decimal"
-                className="tf-input px-3 py-2.5 text-sm"
+                className="tf-input w-full min-w-0 px-3 py-2.5 text-sm"
                 placeholder="Peso (kg)"
                 value={bwInput}
                 onChange={(e) => {
@@ -298,7 +298,7 @@ export function ProfileView({
               />
               <input
                 type="date"
-                className="tf-input px-3 py-2.5 text-sm"
+                className="tf-input w-full min-w-0 max-w-full px-3 py-2.5 text-sm"
                 value={bwDate}
                 onChange={(e) => setBwDate(e.target.value)}
               />
@@ -455,10 +455,10 @@ export function ProfileView({
               </div>
             ))}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 min-w-0">
             <input
               type="text"
-              className="tf-input flex-1 px-3 py-2 text-sm"
+              className="tf-input flex-1 min-w-0 w-full px-3 py-2 text-sm"
               placeholder={`Nombre del ${labels.sing}`}
               value={newAth}
               onChange={(e) => {

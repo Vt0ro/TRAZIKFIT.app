@@ -196,6 +196,8 @@ html[data-os="android"] .tf-card {
   border: 1px solid var(--line);
   color: var(--tx);
   border-radius: 12px;
+  min-width: 0;
+  max-width: 100%;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 

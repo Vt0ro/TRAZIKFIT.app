@@ -30,6 +30,7 @@ interface NavigationProps {
   unreadNotifications: number;
   intervalMiniLeft: number | null;
   restMiniLeft: number | null;
+  restMiniPhase?: 'work' | 'rest';
   activeSessionMini: { id: string; elapsed: number } | null;
   onNavigate: (view: ActiveView) => void;
   onOpenProfileSheet: () => void;
@@ -59,6 +60,7 @@ export function NavigationShell({
   unreadNotifications,
   intervalMiniLeft,
   restMiniLeft,
+  restMiniPhase = 'rest',
   activeSessionMini,
   onNavigate,
   onOpenProfileSheet,
@@ -306,9 +308,19 @@ export function NavigationShell({
                   haptic('light');
                   onResumeActiveSession(activeSessionMini.id);
                 }}
-                className="tf-tap min-h-[38px] px-3 rounded-xl bg-[var(--surface)] border border-[var(--ac2)]/45 text-xs font-mono-num font-semibold flex items-center gap-1.5 cursor-pointer"
+                className={`tf-tap min-h-[38px] px-3 rounded-xl border text-xs font-mono-num font-semibold flex items-center gap-1.5 cursor-pointer ${
+                  restMiniLeft !== null && restMiniPhase === 'work'
+                    ? 'bg-emerald-500/20 border-emerald-400/60 text-emerald-300'
+                    : 'bg-[var(--surface)] border-[var(--ac2)]/45'
+                }`}
               >
-                <Clock className="w-3.5 h-3.5 text-[var(--ac2)]" />
+                <Clock
+                  className={`w-3.5 h-3.5 ${
+                    restMiniLeft !== null && restMiniPhase === 'work'
+                      ? 'text-emerald-300'
+                      : 'text-[var(--ac2)]'
+                  }`}
+                />
                 {restMiniLeft !== null ? fm(restMiniLeft) : fm(activeSessionMini.elapsed)}
               </button>
             )}

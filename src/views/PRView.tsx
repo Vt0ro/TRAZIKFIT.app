@@ -194,7 +194,7 @@ export function PRView({
 
   return (
     <div className="space-y-4">
-      <div className="tf-card p-4 space-y-3">
+      <div className="tf-card p-4 space-y-3 min-w-0 overflow-hidden">
         <div>
           <b className="text-base block">★ Récords personales (PR)</b>
           <p className="text-xs text-[var(--mut)] mt-1 leading-relaxed" data-selectable="true">
@@ -206,7 +206,7 @@ export function PRView({
         </div>
 
         {rows.length ? (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-w-full">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[11px] text-[var(--mut)] border-b border-[var(--line)]">
@@ -312,13 +312,13 @@ export function PRView({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="tf-card p-4 space-y-3">
+        <div className="tf-card p-4 space-y-3 min-w-0 overflow-hidden">
           <b className="text-base block">Ejercicios a seguir</b>
-          <div className="flex gap-2">
+          <div className="flex gap-2 min-w-0">
             <input
               type="text"
               list="pr-l"
-              className="tf-input flex-1 px-3 py-2.5 text-sm"
+              className="tf-input flex-1 min-w-0 w-full px-3 py-2.5 text-sm"
               placeholder="Nombre del ejercicio"
               value={trackInput}
               onChange={(e) => setTrackInput(e.target.value)}
@@ -376,12 +376,12 @@ export function PRView({
           )}
         </div>
 
-        <div className="tf-card p-4 space-y-3">
+        <div className="tf-card p-4 space-y-3 min-w-0 overflow-hidden">
           <b className="text-base block">Registrar una marca manual</b>
           {rows.length ? (
             <>
               <select
-                className="tf-input w-full px-3 py-2.5 text-sm"
+                className="tf-input w-full min-w-0 px-3 py-2.5 text-sm"
                 value={activeSelectName}
                 onChange={(e) => setSelectedPRName(e.target.value)}
               >
@@ -391,18 +391,18 @@ export function PRView({
                   </option>
                 ))}
               </select>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 min-w-0">
                 <input
                   type="text"
                   inputMode="decimal"
-                  className="tf-input px-3 py-2.5 text-sm"
+                  className="tf-input w-full min-w-0 px-3 py-2.5 text-sm"
                   placeholder="kg (0 = sin carga)"
                   value={manualKg}
                   onChange={(e) => setManualKg(e.target.value)}
                 />
                 <input
                   type="text"
-                  className="tf-input px-3 py-2.5 text-sm"
+                  className="tf-input w-full min-w-0 px-3 py-2.5 text-sm"
                   placeholder="reps o tiempo (1:30)"
                   value={manualReps}
                   onChange={(e) => setManualReps(e.target.value)}
@@ -410,7 +410,7 @@ export function PRView({
               </div>
               <input
                 type="date"
-                className="tf-input w-full px-3 py-2.5 text-sm"
+                className="tf-input w-full min-w-0 max-w-full px-3 py-2.5 text-sm"
                 value={manualDate}
                 onChange={(e) => setManualDate(e.target.value)}
               />

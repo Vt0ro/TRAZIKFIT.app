@@ -251,6 +251,15 @@ export interface RestTimerState {
   doneAt?: number;
   paused: boolean;
   left: number;
+  phase?: 'work' | 'rest';
+  workLabel?: string;
+  nextRestSec?: number;
+  workLink?: {
+    sid: string;
+    exIdx: number;
+    setIdx: number;
+    workSec: number;
+  };
 }
 
 export interface SetStopwatchState {

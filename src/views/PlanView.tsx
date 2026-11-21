@@ -177,14 +177,10 @@ export function PlanView({
                                   })),
                                 });
                               }}
-                              className={`tf-tap min-h-[30px] px-2.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer ${
-                                cfg?.iv
-                                  ? 'tf-btn-pri'
-                                  : 'border border-[var(--line)] bg-[var(--surface-2)] text-[var(--mut)] hover:text-[var(--tx)]'
-                              }`}
+                              className="tf-tap tf-btn-pri min-h-[30px] px-2.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
                             >
                               <Timer className="w-3 h-3" />
-                              <span>{cfg?.iv ? 'Iniciar en Intervalos' : 'Usar en Intervalos'}</span>
+                              <span>Iniciar en Intervalos</span>
                             </button>
                           )}
                         </div>
@@ -707,10 +703,10 @@ export function PlanView({
                       isCirc ? 'pl-3 rounded-lg bg-[var(--ac)]/5 p-3' : ''
                     }`}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <input
                         type="text"
-                        className="tf-input flex-1 px-3 py-1.5 text-sm font-semibold text-[var(--ac2)]"
+                        className="tf-input flex-1 min-w-0 w-full px-3 py-1.5 text-sm font-semibold text-[var(--ac2)]"
                         value={b[0]}
                         onChange={(e) =>
                           updateMonth((m) => {
@@ -726,7 +722,18 @@ export function PlanView({
                           updateMonth((m) => {
                             const blk = m.d[di].b[bi];
                             if (blk[2] && blk[2].c) blk[2].c = 0;
-                            else blk[2] = { r: 3, rest: '90s', ...(blk[2] || {}), c: 1 };
+                            else {
+                              blk[2] = {
+                                r: 3,
+                                rest: '90s',
+                                iw: 40,
+                                it: 10,
+                                ip: 10,
+                                ...(blk[2] || {}),
+                                c: 1,
+                                iv: true,
+                              };
+                            }
                             return m;
                           });
                         }}
@@ -796,141 +803,119 @@ export function PlanView({
                               }
                             />
                           </label>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              haptic('light');
-                              updateMonth((m) => {
-                                const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
-                                  c: 1,
-                                  r: 3,
-                                  rest: '90s',
-                                });
-                                cfg.iv = !cfg.iv;
-                                if (cfg.iv) {
-                                  if (cfg.iw === undefined) cfg.iw = 40;
-                                  if (cfg.it === undefined) cfg.it = 10;
-                                  if (cfg.ip === undefined) cfg.ip = 10;
-                                }
-                                return m;
-                              });
-                            }}
-                            className={`tf-tap min-h-[32px] px-2.5 rounded-lg text-[11px] font-semibold border inline-flex items-center gap-1.5 cursor-pointer ${
-                              b[2]?.iv
-                                ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
-                                : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--mut)] hover:text-[var(--tx)]'
-                            }`}
-                          >
+                          <span className="min-h-[30px] px-2.5 rounded-lg text-[11px] font-semibold bg-[var(--ac)]/20 border border-[var(--ac2)]/35 text-[var(--ac2)] inline-flex items-center gap-1.5">
                             <Timer className="w-3.5 h-3.5" />
-                            <span>
-                              {b[2]?.iv ? '✓ Vinculado a intervalos' : 'Vincular a intervalos (opcional)'}
-                            </span>
-                          </button>
+                            <span>Vinculado automáticamente a intervalos</span>
+                          </span>
                         </div>
 
-                        {b[2]?.iv && (
-                          <div className="rounded-xl border border-[var(--ac)]/25 bg-[var(--surface-2)]/70 p-2.5 space-y-2">
-                            <div className="grid grid-cols-3 gap-2">
-                              <label className="text-[11px] text-[var(--mut)]">
-                                Prep (s)
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={120}
-                                  inputMode="numeric"
-                                  className="tf-input w-full mt-1 px-2 py-1 text-center text-xs font-semibold tabular-nums"
-                                  value={b[2]?.ip ?? 10}
-                                  onChange={(e) =>
-                                    updateMonth((m) => {
-                                      const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
-                                        c: 1,
-                                        r: 3,
-                                        rest: '90s',
-                                      });
-                                      cfg.ip = Math.max(0, Math.min(120, parseInt(e.target.value) || 0));
-                                      return m;
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label className="text-[11px] text-[var(--mut)]">
-                                Estación (s)
-                                <input
-                                  type="number"
-                                  min={5}
-                                  max={3600}
-                                  inputMode="numeric"
-                                  className="tf-input w-full mt-1 px-2 py-1 text-center text-xs font-semibold tabular-nums"
-                                  value={b[2]?.iw ?? 40}
-                                  onChange={(e) =>
-                                    updateMonth((m) => {
-                                      const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
-                                        c: 1,
-                                        r: 3,
-                                        rest: '90s',
-                                      });
-                                      cfg.iw = Math.max(5, Math.min(3600, parseInt(e.target.value) || 5));
-                                      return m;
-                                    })
-                                  }
-                                />
-                              </label>
-                              <label className="text-[11px] text-[var(--mut)]">
-                                Cambio (s)
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={300}
-                                  inputMode="numeric"
-                                  className="tf-input w-full mt-1 px-2 py-1 text-center text-xs font-semibold tabular-nums"
-                                  value={b[2]?.it ?? 10}
-                                  onChange={(e) =>
-                                    updateMonth((m) => {
-                                      const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
-                                        c: 1,
-                                        r: 3,
-                                        rest: '90s',
-                                      });
-                                      cfg.it = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
-                                      return m;
-                                    })
-                                  }
-                                />
-                              </label>
-                            </div>
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10.5px] text-[var(--mut)]">
-                                Ejercicios «por tiempo» usan su duración propia.
-                              </span>
-                              {b[1].length > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    unlockAudio();
-                                    haptic('medium');
-                                    const cfg = b[2];
-                                    onStartCircuitIntervals({
-                                      id: `plan:${M.id || 'm'}:${di}:${bi}`,
-                                      title: `${M.n} · ${d.n} · ${b[0]}`,
-                                      rounds: Math.max(1, parseInt(String(cfg?.r)) || 3),
-                                      roundRestSec: pRest(cfg?.rest),
-                                      workSec: cfg?.iw && cfg.iw > 0 ? cfg.iw : 40,
-                                      transSec: cfg?.it !== undefined ? cfg.it : 10,
-                                      prepSec: cfg?.ip !== undefined ? cfg.ip : 10,
-                                      exercises: b[1].map((ex) => ({
-                                        name: ex.n,
-                                        workSec: ex.mt === 'time' ? secs(ex.r) || undefined : undefined,
-                                      })),
+                        <div className="rounded-xl border border-[var(--ac)]/25 bg-[var(--surface-2)]/70 p-2.5 space-y-2">
+                          <div className="grid grid-cols-3 gap-2 min-w-0">
+                            <label className="text-[11px] text-[var(--mut)] min-w-0">
+                              Prep (s)
+                              <input
+                                type="number"
+                                min={0}
+                                max={120}
+                                inputMode="numeric"
+                                className="tf-input w-full min-w-0 mt-1 px-2 py-1 text-center text-xs font-semibold tabular-nums"
+                                value={b[2]?.ip ?? 10}
+                                onChange={(e) =>
+                                  updateMonth((m) => {
+                                    const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
+                                      c: 1,
+                                      r: 3,
+                                      rest: '90s',
+                                      iv: true,
                                     });
-                                  }}
-                                  className="tf-btn-pri px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
-                                >
-                                  <Play className="w-3 h-3" /> Probar
-                                </button>
-                              )}
-                            </div>
+                                    cfg.iv = true;
+                                    cfg.ip = Math.max(0, Math.min(120, parseInt(e.target.value) || 0));
+                                    return m;
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="text-[11px] text-[var(--mut)] min-w-0">
+                              Estación (s)
+                              <input
+                                type="number"
+                                min={5}
+                                max={3600}
+                                inputMode="numeric"
+                                className="tf-input w-full min-w-0 mt-1 px-2 py-1 text-center text-xs font-semibold tabular-nums"
+                                value={b[2]?.iw ?? 40}
+                                onChange={(e) =>
+                                  updateMonth((m) => {
+                                    const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
+                                      c: 1,
+                                      r: 3,
+                                      rest: '90s',
+                                      iv: true,
+                                    });
+                                    cfg.iv = true;
+                                    cfg.iw = Math.max(5, Math.min(3600, parseInt(e.target.value) || 5));
+                                    return m;
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="text-[11px] text-[var(--mut)] min-w-0">
+                              Cambio (s)
+                              <input
+                                type="number"
+                                min={0}
+                                max={300}
+                                inputMode="numeric"
+                                className="tf-input w-full min-w-0 mt-1 px-2 py-1 text-center text-xs font-semibold tabular-nums"
+                                value={b[2]?.it ?? 10}
+                                onChange={(e) =>
+                                  updateMonth((m) => {
+                                    const cfg = (m.d[di].b[bi][2] = m.d[di].b[bi][2] || {
+                                      c: 1,
+                                      r: 3,
+                                      rest: '90s',
+                                      iv: true,
+                                    });
+                                    cfg.iv = true;
+                                    cfg.it = Math.max(0, Math.min(300, parseInt(e.target.value) || 0));
+                                    return m;
+                                  })
+                                }
+                              />
+                            </label>
                           </div>
-                        )}
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10.5px] text-[var(--mut)]">
+                              Ejercicios «por tiempo» usan su duración propia en Intervalos.
+                            </span>
+                            {b[1].length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  unlockAudio();
+                                  haptic('medium');
+                                  const cfg = b[2];
+                                  onStartCircuitIntervals({
+                                    id: `plan:${M.id || 'm'}:${di}:${bi}`,
+                                    title: `${M.n} · ${d.n} · ${b[0]}`,
+                                    rounds: Math.max(1, parseInt(String(cfg?.r)) || 3),
+                                    roundRestSec: pRest(cfg?.rest),
+                                    workSec: cfg?.iw && cfg.iw > 0 ? cfg.iw : 40,
+                                    transSec: cfg?.it !== undefined ? cfg.it : 10,
+                                    prepSec: cfg?.ip !== undefined ? cfg.ip : 10,
+                                    exercises: b[1].map((ex) => ({
+                                      name: ex.n,
+                                      workSec: ex.mt === 'time' ? secs(ex.r) || undefined : undefined,
+                                    })),
+                                  });
+                                }}
+                                className="tf-btn-pri px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                              >
+                                <Play className="w-3 h-3" /> Probar
+                              </button>
+                            )}
+                          </div>
+                        </div>
 
                         <p className="text-[11px] text-[var(--mut)]">
                           Estaciones: los ejercicios de este bloque se hacen seguidos, una ronda tras otra.
@@ -1225,7 +1210,11 @@ export function PlanView({
                   type="button"
                   onClick={() =>
                     updateMonth((m) => {
-                      m.d[di].b.push(['Circuito', [], { c: 1, r: 3, rest: '90s' }] as Block);
+                      m.d[di].b.push([
+                        'Circuito',
+                        [],
+                        { c: 1, r: 3, rest: '90s', iv: true, iw: 40, it: 10, ip: 10 },
+                      ] as Block);
                       return m;
                     })
                   }

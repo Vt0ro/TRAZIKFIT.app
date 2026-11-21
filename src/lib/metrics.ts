@@ -92,6 +92,23 @@ export function secs(b: string | number | undefined): number {
   return 0;
 }
 
+export function parseWorkSeconds(
+  setVal: string | number | undefined,
+  tgVal?: string,
+  fallback = 45
+): number {
+  const fromSet = secs(setVal);
+  if (fromSet > 0) return fromSet;
+  if (tgVal) {
+    const afterCross = String(tgVal).includes('×')
+      ? String(tgVal).split('×').slice(1).join('×')
+      : String(tgVal);
+    const fromTg = secs(afterCross);
+    if (fromTg > 0) return fromTg;
+  }
+  return fallback;
+}
+
 export function reps(b: string | number | undefined): number {
   const s = String(b || '')
     .toLowerCase()
@@ -422,10 +439,10 @@ export function exFrom(d: DayPlan): Exercise[] {
             n: b[1].length,
             r: Math.max(1, parseInt(String(b[2].r)) || 3),
             rest: b[2].rest || '90s',
-            ...(b[2].iv ? { iv: true } : {}),
-            ...(b[2].iw ? { iw: b[2].iw } : {}),
-            ...(b[2].it !== undefined ? { it: b[2].it } : {}),
-            ...(b[2].ip !== undefined ? { ip: b[2].ip } : {}),
+            iv: true,
+            iw: b[2].iw && b[2].iw > 0 ? b[2].iw : 40,
+            it: b[2].it !== undefined ? b[2].it : 10,
+            ip: b[2].ip !== undefined ? b[2].ip : 10,
           }
         : null;
     b[1].forEach((x, k) => {
@@ -449,10 +466,10 @@ export function exFrom(d: DayPlan): Exercise[] {
                 n: c.n,
                 r: c.r,
                 rest: c.rest,
-                ...(c.iv ? { iv: true } : {}),
-                ...(c.iw ? { iw: c.iw } : {}),
-                ...(c.it !== undefined ? { it: c.it } : {}),
-                ...(c.ip !== undefined ? { ip: c.ip } : {}),
+                iv: true,
+                iw: c.iw,
+                it: c.it,
+                ip: c.ip,
               },
             }
           : {}),
@@ -553,7 +570,7 @@ export function extractCircuitTargets(S: AppState): CircuitIntervalTarget[] {
       targets.push({
         id: `ses:${s.id}:${groupId}`,
         title: `${s.name || 'Sesión'} · ${blockLabel}`,
-        subtitle: `${fdateShort(s.date)} · ${exs.length} estaciones · ${first.r} rondas${first.iv ? ' · Vinculado' : ''}`,
+        subtitle: `${fdateShort(s.date)} · ${exs.length} estaciones · ${first.r} rondas · Vinculado`,
         rounds: Math.max(1, first.r || 3),
         roundRestSec: pRest(first.rest),
         workSec: first.iw && first.iw > 0 ? first.iw : 40,
@@ -580,7 +597,7 @@ export function extractCircuitTargets(S: AppState): CircuitIntervalTarget[] {
           targets.push({
             id: `plan:${m.id || mi}:${di}:${bi}`,
             title: `${m.n} · ${d.n} · ${b[0]}`,
-            subtitle: `Plan · ${b[1].length} estaciones · ${Math.max(1, parseInt(String(cfg.r)) || 3)} rondas${cfg.iv ? ' · Vinculado' : ''}`,
+            subtitle: `Plan · ${b[1].length} estaciones · ${Math.max(1, parseInt(String(cfg.r)) || 3)} rondas · Vinculado`,
             rounds: Math.max(1, parseInt(String(cfg.r)) || 3),
             roundRestSec: pRest(cfg.rest),
             workSec: cfg.iw && cfg.iw > 0 ? cfg.iw : 40,

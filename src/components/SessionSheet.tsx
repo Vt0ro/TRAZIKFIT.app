@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Pause, Play, Timer, Volume2, VolumeX } from 'lucide-react';
+import { CheckCircle2, Pause, Play, RotateCcw, Timer, Volume2, VolumeX } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
 import { BarChart } from './Charts';
+import { isSessionFullyDone } from '../lib/notifications';
 import {
   DEFAULT_SOUND_SETTINGS,
   haptic,
@@ -32,7 +33,6 @@ import type {
   MetricKey,
   ResolvedOS,
   RestTimerState,
-  SetStopwatchState,
   SoundSettings,
   TrainingSession,
 } from '../types/trazik';
@@ -44,8 +44,6 @@ interface SessionSheetProps {
   isProfileVisible: boolean;
   restTimer: RestTimerState | null;
   restLeft: number;
-  stopwatch: SetStopwatchState | null;
-  stopwatchFormatted: string;
   nowTick: number;
   sound: SoundSettings;
   onToggleSound: () => void;
@@ -54,12 +52,13 @@ interface SessionSheetProps {
   onChangeMetric: (m: MetricKey) => void;
   onUpdateSession: (updater: (s: TrainingSession) => TrainingSession) => void;
   onFinishSession: (s: TrainingSession) => void;
+  onUnfinishSession?: (s: TrainingSession) => void;
   onStartCircuitIntervals: (target: CircuitIntervalTarget) => void;
   onDuplicatePlus7: (s: TrainingSession) => void;
   onDeleteSession: (id: string) => void;
   onTimerAction: (action: string) => void;
   onAutoTimer: (s: TrainingSession, exerciseIndex: number) => void;
-  onToggleStopwatch: (s: TrainingSession, exIdx: number, setIdx: number) => void;
+  onStartWorkTimer: (s: TrainingSession, exIdx: number, setIdx: number) => void;
 }
 
 export function SessionSheet({
@@ -69,8 +68,6 @@ export function SessionSheet({
   isProfileVisible,
   restTimer,
   restLeft,
-  stopwatch,
-  stopwatchFormatted,
   sound,
   onToggleSound,
   onClose,
@@ -78,12 +75,13 @@ export function SessionSheet({
   onChangeMetric,
   onUpdateSession,
   onFinishSession,
+  onUnfinishSession,
   onStartCircuitIntervals,
   onDuplicatePlus7,
   onDeleteSession,
   onTimerAction,
   onAutoTimer,
-  onToggleStopwatch,
+  onStartWorkTimer,
 }: SessionSheetProps) {
   const [timerExpanded, setTimerExpanded] = useState(false);
   const [zoomedSrc, setZoomedSrc] = useState<string | null>(null);
@@ -103,6 +101,7 @@ export function SessionSheet({
   const zero = !s.tm || (!s.tm.st && !(s.tm.acc > 0));
   const restDone = !!(restTimer && restTimer.done);
   const restPaused = !!(restTimer && restTimer.paused);
+  const isWorkPhase = Boolean(restTimer && restTimer.phase === 'work' && !restDone);
   const restPct =
     restTimer && !restDone ? Math.max(0, (restLeft / Math.max(1, restTimer.tot)) * 100) : 0;
 
@@ -140,8 +139,14 @@ export function SessionSheet({
   return (
     <BottomSheet open={!!session} onClose={onClose} os={os} maxWidthClass="max-w-2xl">
       <div className="space-y-4">
-        {/* Sticky Session + Rest Timer Bar */}
-        <div className="sticky -top-2 z-20 -mx-4 px-4 py-2.5 bg-[var(--bg)]/95 backdrop-blur-md border-b border-[var(--line)]">
+        {/* Sticky Session + Work/Rest Timer Bar */}
+        <div
+          className={`sticky -top-2 z-20 -mx-4 px-4 py-2.5 backdrop-blur-md border-b ${
+            isWorkPhase
+              ? 'bg-emerald-950/35 border-emerald-400/50'
+              : 'bg-[var(--bg)]/95 border-[var(--line)]'
+          }`}
+        >
           <div
             onClick={() => {
               haptic('light');
@@ -151,17 +156,27 @@ export function SessionSheet({
               restDone ? 'animate-rest-flash rounded-xl px-1' : ''
             }`}
           >
-            <div className="flex-1 leading-tight">
+            <div className="flex-1 leading-tight min-w-0">
               <small className="block text-[10.5px] uppercase tracking-wider text-[var(--mut)]">
                 Sesión
               </small>
               <b className="text-2xl font-bold font-mono-num">{fm(elapsed)}</b>
             </div>
-            <div className="flex-1 leading-tight">
-              <small className="block text-[10.5px] uppercase tracking-wider text-[var(--mut)]">
-                Descanso{restPaused ? ' · pausa' : ''}
+            <div className="flex-1 leading-tight min-w-0">
+              <small
+                className={`block text-[10.5px] uppercase tracking-wider truncate ${
+                  isWorkPhase ? 'text-emerald-300 font-bold' : 'text-[var(--mut)]'
+                }`}
+              >
+                {isWorkPhase
+                  ? `Tiempo de trabajo${restPaused ? ' · pausa' : ''}`
+                  : `Tiempo de descanso${restPaused ? ' · pausa' : ''}`}
               </small>
-              <b className="text-2xl sm:text-3xl font-bold text-[var(--ac2)] font-mono-num">
+              <b
+                className={`text-2xl sm:text-3xl font-bold font-mono-num ${
+                  isWorkPhase ? 'text-emerald-300' : 'text-[var(--ac2)]'
+                }`}
+              >
                 {restTimer ? (restDone ? '¡Listo!' : fm(restLeft)) : '0:00'}
               </b>
             </div>
@@ -205,7 +220,11 @@ export function SessionSheet({
           </div>
           <div className="h-1.5 rounded-full bg-[var(--surface-2)] mt-2 overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-[#6b4590] to-[#a78bc4] transition-all duration-150"
+              className={`h-full rounded-full transition-all duration-150 ${
+                isWorkPhase
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-300'
+                  : 'bg-gradient-to-r from-[#6b4590] to-[#a78bc4]'
+              }`}
               style={{ width: `${restPct}%` }}
             />
           </div>
@@ -214,13 +233,27 @@ export function SessionSheet({
         {/* Expanded Timer Panel */}
         {timerExpanded && (
           <div className="tf-card p-4 text-center space-y-3">
-            <small className="block text-xs tracking-wider text-[var(--mut)]">DESCANSO</small>
-            <div className="font-display text-6xl font-extrabold text-[var(--ac2)] tabular-nums leading-none">
+            <small
+              className={`block text-xs tracking-wider font-semibold ${
+                isWorkPhase ? 'text-emerald-300' : 'text-[var(--mut)]'
+              }`}
+            >
+              {isWorkPhase ? 'TIEMPO DE TRABAJO' : 'TIEMPO DE DESCANSO'}
+            </small>
+            <div
+              className={`font-display text-6xl font-extrabold tabular-nums leading-none ${
+                isWorkPhase ? 'text-emerald-300' : 'text-[var(--ac2)]'
+              }`}
+            >
               {restTimer ? (restDone ? '¡Listo!' : fm(restLeft)) : '0:00'}
             </div>
             <div className="h-2.5 rounded-full bg-[var(--surface-2)] overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-[#6b4590] to-[#a78bc4] transition-all duration-150"
+                className={`h-full rounded-full transition-all duration-150 ${
+                  isWorkPhase
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-300'
+                    : 'bg-gradient-to-r from-[#6b4590] to-[#a78bc4]'
+                }`}
                 style={{ width: `${restPct}%` }}
               />
             </div>
@@ -330,10 +363,10 @@ export function SessionSheet({
         )}
 
         {/* Session Name & Date */}
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-0">
           <input
             type="text"
-            className="tf-input flex-[2] min-w-[160px] px-3 py-2.5 text-sm font-semibold"
+            className="tf-input w-full min-w-0 px-3 py-2.5 text-sm font-semibold"
             placeholder="Nombre de la sesión"
             value={s.name || ''}
             onChange={(e) =>
@@ -342,7 +375,7 @@ export function SessionSheet({
           />
           <input
             type="date"
-            className="tf-input flex-1 min-w-[140px] px-3 py-2.5 text-sm"
+            className="tf-input w-full min-w-0 max-w-full px-3 py-2.5 text-sm"
             value={s.date}
             onChange={(e) =>
               onUpdateSession((cur) => ({ ...cur, date: e.target.value }))
@@ -445,13 +478,16 @@ export function SessionSheet({
               (a) => nz(a.name) === nz(e.name) && a.m && a.m === smid
             );
 
+            const isCircuitEx = !!e.circ;
+            const hideTimeColInCircuit = isCircuitEx && (e.mt === 'time' || t === 'res');
+            const isStandaloneTimed = !isCircuitEx && (e.mt === 'time' || t === 'res');
+
             return (
               <div key={i} className="space-y-2">
                 {showCircHeader && e.circ && (() => {
                   const cMeta = e.circ;
                   const groupId = cMeta.g;
                   const groupExs = s.exercises.filter((ex) => ex.circ?.g === groupId);
-                  const ivLinked = !!cMeta.iv;
                   const workSec = cMeta.iw && cMeta.iw > 0 ? cMeta.iw : 40;
                   const transSec = cMeta.it !== undefined ? cMeta.it : 10;
                   const prepSec = cMeta.ip !== undefined ? cMeta.ip : 10;
@@ -461,121 +497,103 @@ export function SessionSheet({
                       ...cur,
                       exercises: cur.exercises.map((ex) =>
                         ex.circ?.g === groupId
-                          ? { ...ex, circ: { ...ex.circ, ...patch } }
+                          ? { ...ex, circ: { ...ex.circ, iv: true, ...patch } }
                           : ex
                       ),
                     }));
                   };
 
                   return (
-                    <div className="rounded-xl border border-[var(--ac)]/30 bg-[var(--ac)]/10 p-3 space-y-2.5 mt-2">
+                    <div className="rounded-xl border border-[var(--ac)]/30 bg-[var(--ac)]/10 p-3 space-y-2.5 mt-2 min-w-0 overflow-hidden">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs font-semibold text-[var(--ac2)]">
                           Circuito · {groupExs.length} estaciones · {cMeta.r} rondas · desc entre rondas{' '}
                           {cMeta.rest || ''}
                         </div>
+                        <span className="min-h-[28px] px-2.5 rounded-lg text-[11px] font-semibold bg-[var(--ac)]/20 border border-[var(--ac2)]/35 text-[var(--ac2)] inline-flex items-center gap-1.5">
+                          <Timer className="w-3.5 h-3.5" />
+                          <span>Vinculado automáticamente</span>
+                        </span>
+                      </div>
+
+                      <div className="pt-2 border-t border-[var(--line)]/50 space-y-2">
+                        <div className="grid grid-cols-3 gap-2 min-w-0">
+                          <label className="text-[11px] text-[var(--mut)] min-w-0">
+                            Prep (s)
+                            <input
+                              type="number"
+                              min={0}
+                              max={120}
+                              inputMode="numeric"
+                              className="tf-input w-full min-w-0 mt-1 px-2 py-1.5 text-center text-xs font-semibold tabular-nums"
+                              value={prepSec}
+                              onChange={(ev) =>
+                                patchCircuit({ ip: Math.max(0, Math.min(120, parseInt(ev.target.value) || 0)) })
+                              }
+                            />
+                          </label>
+                          <label className="text-[11px] text-[var(--mut)] min-w-0">
+                            Estación (s)
+                            <input
+                              type="number"
+                              min={5}
+                              max={3600}
+                              inputMode="numeric"
+                              className="tf-input w-full min-w-0 mt-1 px-2 py-1.5 text-center text-xs font-semibold tabular-nums"
+                              value={workSec}
+                              onChange={(ev) =>
+                                patchCircuit({ iw: Math.max(5, Math.min(3600, parseInt(ev.target.value) || 5)) })
+                              }
+                            />
+                          </label>
+                          <label className="text-[11px] text-[var(--mut)] min-w-0">
+                            Cambio (s)
+                            <input
+                              type="number"
+                              min={0}
+                              max={300}
+                              inputMode="numeric"
+                              className="tf-input w-full min-w-0 mt-1 px-2 py-1.5 text-center text-xs font-semibold tabular-nums"
+                              value={transSec}
+                              onChange={(ev) =>
+                                patchCircuit({ it: Math.max(0, Math.min(300, parseInt(ev.target.value) || 0)) })
+                              }
+                            />
+                          </label>
+                        </div>
                         <button
                           type="button"
                           onClick={() => {
-                            haptic('light');
-                            patchCircuit({
-                              iv: !ivLinked,
-                              ...(cMeta.iw === undefined ? { iw: 40 } : {}),
-                              ...(cMeta.it === undefined ? { it: 10 } : {}),
-                              ...(cMeta.ip === undefined ? { ip: 10 } : {}),
+                            unlockAudio();
+                            haptic('medium');
+                            onStartCircuitIntervals({
+                              id: `ses:${s.id}:${groupId}`,
+                              title: `${s.name || 'Sesión'} · ${e.block || 'Circuito'}`,
+                              rounds: Math.max(1, cMeta.r || 3),
+                              roundRestSec: pRest(cMeta.rest),
+                              workSec,
+                              transSec,
+                              prepSec,
+                              sessionId: s.id,
+                              groupId,
+                              autoComplete: true,
+                              exercises: groupExs.map((ex) => ({
+                                name: ex.name,
+                                workSec: ex.mt === 'time' ? secs(ex.sets[0]?.b) || undefined : undefined,
+                              })),
                             });
                           }}
-                          className={`tf-tap min-h-[32px] px-2.5 rounded-lg text-[11px] font-semibold border inline-flex items-center gap-1.5 cursor-pointer ${
-                            ivLinked
-                              ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
-                              : 'bg-[var(--surface-2)] border-[var(--line)] text-[var(--mut)] hover:text-[var(--tx)]'
-                          }`}
+                          className="tf-btn-pri w-full min-h-[38px] rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
                         >
-                          <Timer className="w-3.5 h-3.5" />
-                          <span>{ivLinked ? 'Vinculado a intervalos' : 'Vincular a intervalos'}</span>
+                          <Play className="w-3.5 h-3.5" /> Iniciar circuito en cronómetro de intervalos
                         </button>
                       </div>
-
-                      {ivLinked && (
-                        <div className="pt-2 border-t border-[var(--line)]/50 space-y-2">
-                          <div className="grid grid-cols-3 gap-2">
-                            <label className="text-[11px] text-[var(--mut)]">
-                              Prep (s)
-                              <input
-                                type="number"
-                                min={0}
-                                max={120}
-                                inputMode="numeric"
-                                className="tf-input w-full mt-1 px-2 py-1.5 text-center text-xs font-semibold tabular-nums"
-                                value={prepSec}
-                                onChange={(ev) =>
-                                  patchCircuit({ ip: Math.max(0, Math.min(120, parseInt(ev.target.value) || 0)) })
-                                }
-                              />
-                            </label>
-                            <label className="text-[11px] text-[var(--mut)]">
-                              Estación (s)
-                              <input
-                                type="number"
-                                min={5}
-                                max={3600}
-                                inputMode="numeric"
-                                className="tf-input w-full mt-1 px-2 py-1.5 text-center text-xs font-semibold tabular-nums"
-                                value={workSec}
-                                onChange={(ev) =>
-                                  patchCircuit({ iw: Math.max(5, Math.min(3600, parseInt(ev.target.value) || 5)) })
-                                }
-                              />
-                            </label>
-                            <label className="text-[11px] text-[var(--mut)]">
-                              Cambio (s)
-                              <input
-                                type="number"
-                                min={0}
-                                max={300}
-                                inputMode="numeric"
-                                className="tf-input w-full mt-1 px-2 py-1.5 text-center text-xs font-semibold tabular-nums"
-                                value={transSec}
-                                onChange={(ev) =>
-                                  patchCircuit({ it: Math.max(0, Math.min(300, parseInt(ev.target.value) || 0)) })
-                                }
-                              />
-                            </label>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              unlockAudio();
-                              haptic('medium');
-                              onStartCircuitIntervals({
-                                id: `ses:${s.id}:${groupId}`,
-                                title: `${s.name || 'Sesión'} · ${e.block || 'Circuito'}`,
-                                rounds: Math.max(1, cMeta.r || 3),
-                                roundRestSec: pRest(cMeta.rest),
-                                workSec,
-                                transSec,
-                                prepSec,
-                                sessionId: s.id,
-                                groupId,
-                                autoComplete: true,
-                                exercises: groupExs.map((ex) => ({
-                                  name: ex.name,
-                                  workSec: ex.mt === 'time' ? secs(ex.sets[0]?.b) || undefined : undefined,
-                                })),
-                              });
-                            }}
-                            className="tf-btn-pri w-full min-h-[38px] rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <Play className="w-3.5 h-3.5" /> Iniciar circuito en cronómetro de intervalos
-                          </button>
-                        </div>
-                      )}
                     </div>
                   );
                 })()}
 
                 <div
-                  className={`tf-card p-3.5 space-y-2.5 ${
+                  className={`tf-card p-3.5 space-y-2.5 min-w-0 overflow-hidden ${
                     e.circ ? 'ring-1 ring-[var(--ac2)]/35' : ''
                   }`}
                 >
@@ -668,40 +686,44 @@ export function SessionSheet({
 
                   {t !== 'res' && (
                     <div className="flex flex-wrap gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateSession((cur) => {
-                            const exs = [...cur.exercises];
-                            exs[i] = { ...exs[i], mt: '' };
-                            return { ...cur, exercises: exs };
-                          })
-                        }
-                        className={`min-h-[34px] px-3 rounded-lg text-xs font-medium border cursor-pointer ${
-                          e.mt !== 'time'
-                            ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
-                            : 'bg-[var(--surface-2)] border-[var(--line)]'
-                        }`}
-                      >
-                        Repeticiones
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateSession((cur) => {
-                            const exs = [...cur.exercises];
-                            exs[i] = { ...exs[i], mt: 'time' };
-                            return { ...cur, exercises: exs };
-                          })
-                        }
-                        className={`min-h-[34px] px-3 rounded-lg text-xs font-medium border cursor-pointer ${
-                          e.mt === 'time'
-                            ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
-                            : 'bg-[var(--surface-2)] border-[var(--line)]'
-                        }`}
-                      >
-                        Tiempo
-                      </button>
+                      {!isCircuitEx && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateSession((cur) => {
+                                const exs = [...cur.exercises];
+                                exs[i] = { ...exs[i], mt: '' };
+                                return { ...cur, exercises: exs };
+                              })
+                            }
+                            className={`min-h-[34px] px-3 rounded-lg text-xs font-medium border cursor-pointer ${
+                              e.mt !== 'time'
+                                ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
+                                : 'bg-[var(--surface-2)] border-[var(--line)]'
+                            }`}
+                          >
+                            Repeticiones
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onUpdateSession((cur) => {
+                                const exs = [...cur.exercises];
+                                exs[i] = { ...exs[i], mt: 'time' };
+                                return { ...cur, exercises: exs };
+                              })
+                            }
+                            className={`min-h-[34px] px-3 rounded-lg text-xs font-medium border cursor-pointer ${
+                              e.mt === 'time'
+                                ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
+                                : 'bg-[var(--surface-2)] border-[var(--line)]'
+                            }`}
+                          >
+                            Tiempo
+                          </button>
+                        </>
+                      )}
                       <button
                         type="button"
                         onClick={() =>
@@ -719,6 +741,16 @@ export function SessionSheet({
                       >
                         {e.bw ? '✓ ' : ''}Usar mi peso corporal
                       </button>
+                    </div>
+                  )}
+
+                  {hideTimeColInCircuit && (
+                    <div className="rounded-xl border border-[var(--ac2)]/25 bg-[var(--ac)]/10 px-3 py-2 text-xs text-[var(--ac2)] flex items-center gap-2">
+                      <Timer className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        Tiempo vinculado automáticamente a Intervalos
+                        {e.sets[0]?.b ? ` (${e.sets[0].b})` : ''}.
+                      </span>
                     </div>
                   )}
 
@@ -776,44 +808,50 @@ export function SessionSheet({
                   )}
 
                   {/* Sets Table */}
-                  <table className="w-full text-sm border-collapse">
+                  <table className="w-full table-fixed text-sm border-collapse">
                     <thead>
                       <tr className="text-[11px] text-[var(--mut)]">
-                        <th className="py-1 font-medium w-8">#</th>
+                        <th className="py-1 font-medium w-6">#</th>
                         {t !== 'res' && (
-                          <th className="py-1 font-medium">
+                          <th className="py-1 px-1 font-medium truncate">
                             {e.bw ? `Lastre (+${u})` : `Carga (${u})`}
                           </th>
                         )}
-                        <th className="py-1 font-medium">
-                          {e.mt === 'time' && t !== 'res'
-                            ? 'Tiempo (mm:ss)'
-                            : t === 'res'
-                            ? `Tiempo (${u})`
-                            : 'Reps'}
-                        </th>
-                        <th className="w-12"></th>
-                        <th className="w-9"></th>
+                        {!hideTimeColInCircuit && (
+                          <th className="py-1 px-1 font-medium truncate">
+                            {e.mt === 'time' && t !== 'res'
+                              ? 'Tiempo'
+                              : t === 'res'
+                              ? `Tiempo (${u})`
+                              : 'Reps'}
+                          </th>
+                        )}
+                        <th className="w-11"></th>
+                        <th className="w-8"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {e.sets.map((st, j) => {
-                        const isSwOn =
-                          stopwatch &&
-                          stopwatch.sid === s.id &&
-                          stopwatch.i === i &&
-                          stopwatch.j === j;
+                        const isWorkForSet = Boolean(
+                          isStandaloneTimed &&
+                            restTimer &&
+                            restTimer.phase === 'work' &&
+                            !restTimer.done &&
+                            restTimer.workLink?.sid === s.id &&
+                            restTimer.workLink.exIdx === i &&
+                            restTimer.workLink.setIdx === j
+                        );
                         return (
                           <tr key={j}>
                             <td className="py-1 text-center text-xs text-[var(--mut)] tabular-nums">
                               {j + 1}
                             </td>
                             {t !== 'res' && (
-                              <td className="p-1">
+                              <td className="p-1 min-w-0">
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  className={`w-full rounded-lg py-2.5 px-1 text-center text-base font-medium tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--ac)] ${
+                                  className={`w-full min-w-0 max-w-full rounded-lg py-2.5 px-1 text-center text-sm sm:text-base font-medium tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--ac)] ${
                                     st.done ? 'bg-[var(--ac)]/25' : 'bg-[var(--surface-2)]'
                                   }`}
                                   value={st.a ?? ''}
@@ -829,16 +867,60 @@ export function SessionSheet({
                                 />
                               </td>
                             )}
-                            <td className="p-1">
-                              {e.mt === 'time' && t !== 'res' ? (
-                                <div className="flex gap-1">
+                            {!hideTimeColInCircuit && (
+                              <td className="p-1 min-w-0">
+                                {isStandaloneTimed ? (
+                                  <div className="flex items-center gap-1 min-w-0">
+                                    <input
+                                      type="text"
+                                      placeholder={t === 'res' ? '30' : '0:45'}
+                                      className={`flex-1 min-w-0 w-full rounded-lg py-2.5 px-1 text-center text-sm sm:text-base font-medium tabular-nums focus:outline-none focus:ring-1 ${
+                                        isWorkForSet
+                                          ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/60 focus:ring-emerald-400'
+                                          : st.done
+                                          ? 'bg-[var(--ac)]/25 focus:ring-[var(--ac)]'
+                                          : 'bg-[var(--surface-2)] focus:ring-[var(--ac)]'
+                                      }`}
+                                      value={isWorkForSet ? fm(restLeft) : String(st.b ?? '')}
+                                      readOnly={isWorkForSet}
+                                      onChange={(ev) =>
+                                        onUpdateSession((cur) => {
+                                          const exs = [...cur.exercises];
+                                          const sets = [...exs[i].sets];
+                                          sets[j] = { ...sets[j], b: ev.target.value };
+                                          exs[i] = { ...exs[i], sets };
+                                          return { ...cur, exercises: exs };
+                                        })
+                                      }
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        haptic('medium');
+                                        onStartWorkTimer(s, i, j);
+                                      }}
+                                      aria-label="Iniciar tiempo de trabajo"
+                                      className={`w-9 sm:w-10 h-10 rounded-lg border flex items-center justify-center shrink-0 cursor-pointer ${
+                                        isWorkForSet
+                                          ? 'bg-emerald-500 border-emerald-400 text-slate-950'
+                                          : 'border-emerald-500/45 bg-emerald-500/15 text-emerald-300'
+                                      }`}
+                                    >
+                                      {isWorkForSet && !restPaused ? (
+                                        <Pause className="w-4 h-4" />
+                                      ) : (
+                                        <Play className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
                                   <input
                                     type="text"
-                                    placeholder="0:45"
-                                    className={`flex-1 min-w-0 rounded-lg py-2.5 px-1 text-center text-base font-medium tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--ac)] ${
+                                    inputMode="decimal"
+                                    className={`w-full min-w-0 max-w-full rounded-lg py-2.5 px-1 text-center text-sm sm:text-base font-medium tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--ac)] ${
                                       st.done ? 'bg-[var(--ac)]/25' : 'bg-[var(--surface-2)]'
                                     }`}
-                                    value={isSwOn ? stopwatchFormatted : String(st.b ?? '')}
+                                    value={st.b ?? ''}
                                     onChange={(ev) =>
                                       onUpdateSession((cur) => {
                                         const exs = [...cur.exercises];
@@ -849,43 +931,10 @@ export function SessionSheet({
                                       })
                                     }
                                   />
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      haptic('light');
-                                      onToggleStopwatch(s, i, j);
-                                    }}
-                                    aria-label="Cronómetro"
-                                    className={`w-11 rounded-lg border text-base flex items-center justify-center shrink-0 cursor-pointer ${
-                                      isSwOn
-                                        ? 'bg-[var(--ac)] border-[var(--ac)] text-white'
-                                        : 'border-[var(--line)] bg-[var(--surface-2)]'
-                                    }`}
-                                  >
-                                    {isSwOn ? '■' : '⏱'}
-                                  </button>
-                                </div>
-                              ) : (
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  className={`w-full rounded-lg py-2.5 px-1 text-center text-base font-medium tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--ac)] ${
-                                    st.done ? 'bg-[var(--ac)]/25' : 'bg-[var(--surface-2)]'
-                                  }`}
-                                  value={st.b ?? ''}
-                                  onChange={(ev) =>
-                                    onUpdateSession((cur) => {
-                                      const exs = [...cur.exercises];
-                                      const sets = [...exs[i].sets];
-                                      sets[j] = { ...sets[j], b: ev.target.value };
-                                      exs[i] = { ...exs[i], sets };
-                                      return { ...cur, exercises: exs };
-                                    })
-                                  }
-                                />
-                              )}
-                            </td>
-                            <td className="p-1 text-center">
+                                )}
+                              </td>
+                            )}
+                            <td className="p-0.5 text-center">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -912,7 +961,7 @@ export function SessionSheet({
                                 ✓
                               </button>
                             </td>
-                            <td className="p-1 text-center">
+                            <td className="p-0.5 text-center">
                               <button
                                 type="button"
                                 onClick={() =>
@@ -925,7 +974,7 @@ export function SessionSheet({
                                     return { ...cur, exercises: exs };
                                   })
                                 }
-                                className="text-[var(--danger)] p-1.5 cursor-pointer"
+                                className="text-[var(--danger)] p-1 cursor-pointer"
                               >
                                 ✕
                               </button>
@@ -1132,18 +1181,41 @@ export function SessionSheet({
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              unlockAudio();
-              haptic('success');
-              onFinishSession(s);
-            }}
-            className="tf-tap w-full min-h-[52px] rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/35 cursor-pointer transition-colors"
-          >
-            <CheckCircle2 className="w-5 h-5" />
-            <span>Finalizar entrenamiento</span>
-          </button>
+          {Boolean(s.finishedAt) || isSessionFullyDone(s) ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-300">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>Entrenamiento marcado como finalizado</span>
+              </div>
+              {onUnfinishSession && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    unlockAudio();
+                    haptic('medium');
+                    onUnfinishSession(s);
+                  }}
+                  className="tf-tap w-full min-h-[50px] rounded-2xl border border-amber-500/40 bg-amber-500/12 hover:bg-amber-500/20 text-amber-300 text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Desmarcar entrenamiento</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                unlockAudio();
+                haptic('success');
+                onFinishSession(s);
+              }}
+              className="tf-tap w-full min-h-[52px] rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/35 cursor-pointer transition-colors"
+            >
+              <CheckCircle2 className="w-5 h-5" />
+              <span>Finalizar entrenamiento</span>
+            </button>
+          )}
         </div>
       </div>
 
